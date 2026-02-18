@@ -1,0 +1,46 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build macOS artifacts
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME}"
+          mkdir -p dist
+
+          for ARCH in amd64 arm64; do
+            OUT_DIR="dist/${VERSION}_darwin_${ARCH}"
+            mkdir -p "${OUT_DIR}"
+            GOOS=darwin GOARCH="${ARCH}" CGO_ENABLED=0 go build -ldflags "-s -w" -o "${OUT_DIR}/codex-notify" .
+            tar -C "${OUT_DIR}" -czf "dist/codex-notify_${VERSION}_darwin_${ARCH}.tar.gz" codex-notify
+          done
+
+          (
+            cd dist
+            shasum -a 256 ./*.tar.gz > checksums.txt
+          )
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/checksums.txt

@@ -1,14 +1,19 @@
 class CodexNotify < Formula
   desc "macOS desktop notification bridge for Codex CLI"
   homepage "https://github.com/MiUPa/codex-notify"
-  url "https://github.com/MiUPa/codex-notify/archive/refs/tags/v0.1.0.tar.gz"
-  sha256 "76dc730d6fced67c27e778e2a82d797d76704eb277a6a31a0bd97927f20fa2d3"
+  version "0.1.0"
   license "Apache-2.0"
 
-  depends_on "go" => :build
+  if Hardware::CPU.arm?
+    url "https://github.com/MiUPa/codex-notify/releases/download/v0.1.0/codex-notify_v0.1.0_darwin_arm64.tar.gz"
+    sha256 "0f3989ce5335e731b0c785666dcadf80940e230c5b3f385a3b2b8a5f1ff32d37"
+  else
+    url "https://github.com/MiUPa/codex-notify/releases/download/v0.1.0/codex-notify_v0.1.0_darwin_amd64.tar.gz"
+    sha256 "6236a1018079354ae5c18c53e0a1a6f1e8c521d739842219f3aedfc255fc3ad1"
+  end
 
   def install
-    system "go", "build", *std_go_args(ldflags: "-s -w"), "."
+    bin.install "codex-notify"
   end
 
   test do

@@ -8,7 +8,8 @@ if [[ $# -ne 1 ]]; then
 fi
 
 VERSION="$1"
-URL="https://github.com/MiUPa/codex-notify/archive/refs/tags/${VERSION}.tar.gz"
+BASE_URL="https://github.com/MiUPa/codex-notify/releases/download/${VERSION}"
+CHECKSUMS_URL="${BASE_URL}/checksums.txt"
 
 TMP_FILE="$(mktemp)"
 cleanup() {
@@ -16,21 +17,33 @@ cleanup() {
 }
 trap cleanup EXIT
 
-curl -fsSL "${URL}" -o "${TMP_FILE}"
-SHA256="$(shasum -a 256 "${TMP_FILE}" | awk '{print $1}')"
+curl -fsSL "${CHECKSUMS_URL}" -o "${TMP_FILE}"
+
+AMD64_SHA256="$(awk -v v="${VERSION}" '$2 ~ "codex-notify_" v "_darwin_amd64.tar.gz" { print $1 }' "${TMP_FILE}")"
+ARM64_SHA256="$(awk -v v="${VERSION}" '$2 ~ "codex-notify_" v "_darwin_arm64.tar.gz" { print $1 }' "${TMP_FILE}")"
+
+if [[ -z "${AMD64_SHA256}" || -z "${ARM64_SHA256}" ]]; then
+  echo "failed to parse checksums.txt for version ${VERSION}" >&2
+  exit 1
+fi
 
 cat <<EOF
 class CodexNotify < Formula
   desc "macOS desktop notification bridge for Codex CLI"
   homepage "https://github.com/MiUPa/codex-notify"
-  url "${URL}"
-  sha256 "${SHA256}"
+  version "${VERSION#v}"
   license "Apache-2.0"
 
-  depends_on "go" => :build
+  if Hardware::CPU.arm?
+    url "${BASE_URL}/codex-notify_${VERSION}_darwin_arm64.tar.gz"
+    sha256 "${ARM64_SHA256}"
+  else
+    url "${BASE_URL}/codex-notify_${VERSION}_darwin_amd64.tar.gz"
+    sha256 "${AMD64_SHA256}"
+  end
 
   def install
-    system "go", "build", *std_go_args(ldflags: "-s -w"), "."
+    bin.install "codex-notify"
   end
 
   test do

@@ -23,6 +23,24 @@ The formula installs prebuilt release binaries for macOS (arm64/amd64), so local
 
 `Formula/codex-notify.rb` in this repository is the source template for your tap repository (`MiUPa/homebrew-codex-notify`).
 
+### If Homebrew install fails with CLT error
+
+On some macOS setups, Homebrew can stop with:
+- `Your Command Line Tools (CLT) does not support macOS 15`
+
+Follow Apple's recommended recovery:
+
+```bash
+sudo rm -rf /Library/Developer/CommandLineTools
+xcode-select --install
+```
+
+After installation finishes, retry:
+
+```bash
+brew install codex-notify
+```
+
 ## Quick Start
 
 1) Initialize Codex config:
@@ -92,11 +110,11 @@ make test
 
 ```bash
 # 1) tag and push
-git tag v0.1.0
-git push origin v0.1.0
+git tag vX.Y.Z
+git push origin vX.Y.Z
 
 # 2) after GitHub Release is created, generate Formula snippet
-./scripts/gen_formula.sh v0.1.0
+./scripts/gen_formula.sh vX.Y.Z
 ```
 
 Use the generated output to update `Formula/codex-notify.rb` in your tap repo.

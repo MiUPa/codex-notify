@@ -26,7 +26,10 @@ const (
 	defaultRejectSeq  = "n,enter"
 )
 
-var rootNotifyLineRE = regexp.MustCompile(`^notify\s*=`)
+var (
+	rootNotifyLineRE  = regexp.MustCompile(`^notify\s*=`)
+	codexHookArrayRE = regexp.MustCompile(`\[\s*"(?:[^"]*/)?codex-notify"\s*,\s*"hook"\s*\]`)
+)
 
 type notificationRequest struct {
 	Title            string
@@ -953,5 +956,5 @@ func isCodexNotifyHookLine(trimmedLine string) bool {
 	}
 
 	rhs := strings.TrimSpace(parts[1])
-	return strings.Contains(rhs, `"codex-notify"`) && strings.Contains(rhs, `"hook"`)
+	return codexHookArrayRE.MatchString(rhs)
 }

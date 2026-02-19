@@ -21,9 +21,20 @@ import (
 const (
 	appName           = "codex-notify"
 	defaultNotifyLine = `notify = ["codex-notify", "hook"]`
+	defaultTerminalID = "com.mitchellh.ghostty"
+	defaultApproveSeq = "y,enter"
+	defaultRejectSeq  = "n,enter"
 )
 
 var rootNotifyLineRE = regexp.MustCompile(`^notify\s*=`)
+
+type notificationRequest struct {
+	Title            string
+	Message          string
+	Group            string
+	ExecuteOnClick   string
+	ActivateBundleID string
+}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -41,6 +52,8 @@ func main() {
 		err = runTest(os.Args[2:])
 	case "hook":
 		err = runHook(os.Args[2:])
+	case "action":
+		err = runAction(os.Args[2:])
 	case "uninstall":
 		err = runUninstall(os.Args[2:])
 	case "help", "-h", "--help":
@@ -64,6 +77,7 @@ Usage:
   %s doctor [--config path]
   %s test [message]
   %s hook [json-payload]
+  %s action <open|approve|reject> [--thread-id id]
   %s uninstall [--restore-config] [--config path]
 
 Commands:
@@ -71,8 +85,9 @@ Commands:
   doctor     Validate runtime requirements and config wiring.
   test       Send a local test notification.
   hook       Receive Codex notify payload and raise macOS notification.
+  action     Execute click action (open terminal / send approve or reject keys).
   uninstall  Restore config from latest backup created by init.
-`, appName, appName, appName, appName, appName, appName)
+`, appName, appName, appName, appName, appName, appName, appName)
 }
 
 func runInit(args []string) error {
@@ -211,7 +226,11 @@ func runTest(args []string) error {
 	if len(args) > 0 {
 		message = strings.Join(args, " ")
 	}
-	return sendNotification("Codex Notify", message)
+	return sendNotification(notificationRequest{
+		Title:   "Codex Notify",
+		Message: message,
+		Group:   "codex-notify-test",
+	})
 }
 
 func runHook(args []string) error {
@@ -220,19 +239,51 @@ func runHook(args []string) error {
 		return err
 	}
 
-	title := "Codex"
-	message := "イベントを受信しました。"
-
+	payload := map[string]any{}
 	if strings.TrimSpace(payloadRaw) != "" {
-		payload := map[string]any{}
 		if err := json.Unmarshal([]byte(payloadRaw), &payload); err != nil {
 			return fmt.Errorf("parse payload json: %w", err)
 		}
-
-		title, message = renderPayloadMessage(payload)
 	}
 
-	return sendNotification(title, message)
+	requests, err := buildHookNotifications(payload)
+	if err != nil {
+		return err
+	}
+
+	for _, req := range requests {
+		if err := sendNotification(req); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func runAction(args []string) error {
+	if len(args) == 0 {
+		return errors.New("action requires one of: open, approve, reject")
+	}
+
+	action := strings.ToLower(strings.TrimSpace(args[0]))
+	fs := flag.NewFlagSet("action", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+
+	threadID := fs.String("thread-id", "", "thread id")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+
+	bundleID := terminalBundleID()
+	switch action {
+	case "open":
+		return activateApplication(bundleID)
+	case "approve":
+		return sendActionKeys(bundleID, approveKeySequence(), *threadID)
+	case "reject":
+		return sendActionKeys(bundleID, rejectKeySequence(), *threadID)
+	default:
+		return fmt.Errorf("unknown action: %s", action)
+	}
 }
 
 func runUninstall(args []string) error {
@@ -488,21 +539,100 @@ func resolveHookPayload(args []string) (string, error) {
 	return strings.TrimSpace(string(b)), nil
 }
 
+func buildHookNotifications(payload map[string]any) ([]notificationRequest, error) {
+	eventName := payloadEventName(payload)
+	threadID := payloadThreadID(payload)
+	title, message := renderPayloadMessage(payload)
+
+	base := notificationRequest{
+		Title:          title,
+		Message:        message,
+		Group:          notificationGroup(eventName, threadID),
+		ExecuteOnClick: buildActionCommand("open", threadID),
+	}
+
+	requests := []notificationRequest{base}
+	if eventName == "approval-requested" && approvalActionsEnabled() {
+		requests = append(requests,
+			notificationRequest{
+				Title:          "Codex: Approve",
+				Message:        "クリックで承認入力を送信",
+				Group:          notificationGroup("approve", threadID),
+				ExecuteOnClick: buildActionCommand("approve", threadID),
+			},
+			notificationRequest{
+				Title:          "Codex: Reject",
+				Message:        "クリックで拒否入力を送信",
+				Group:          notificationGroup("reject", threadID),
+				ExecuteOnClick: buildActionCommand("reject", threadID),
+			},
+		)
+	}
+
+	return requests, nil
+}
+
 func renderPayloadMessage(payload map[string]any) (string, string) {
-	event := getString(payload, "event")
+	event := payloadEventName(payload)
+	preview := payloadPreviewMessage(payload)
+
 	switch event {
 	case "agent-turn-complete":
-		return "Codex: Turn Complete", "入力待ちです。"
+		if preview == "" {
+			preview = "入力待ちです。"
+		}
+		return "Codex: Turn Complete", preview
 	case "approval-requested":
-		return "Codex: Approval Requested", "承認待ちです。"
+		if preview == "" {
+			preview = "承認待ちです。"
+		}
+		return "Codex: Approval Requested", preview
 	case "agent-error":
-		return "Codex: Error", "エラーイベントを受信しました。"
+		if preview == "" {
+			preview = "エラーイベントを受信しました。"
+		}
+		return "Codex: Error", preview
 	default:
 		if event == "" {
-			return "Codex", "通知イベントを受信しました。"
+			if preview == "" {
+				preview = "通知イベントを受信しました。"
+			}
+			return "Codex", preview
+		}
+		if preview != "" {
+			return "Codex", fmt.Sprintf("%s: %s", event, preview)
 		}
 		return "Codex", fmt.Sprintf("イベント: %s", event)
 	}
+}
+
+func payloadEventName(payload map[string]any) string {
+	return getStringAny(payload, "event", "type")
+}
+
+func payloadThreadID(payload map[string]any) string {
+	return getStringAny(payload, "thread-id", "thread_id", "threadId")
+}
+
+func payloadPreviewMessage(payload map[string]any) string {
+	msg := getStringAny(
+		payload,
+		"last-assistant-message",
+		"last_assistant_message",
+		"message",
+		"text",
+	)
+	if msg == "" {
+		msgs := getStringSliceAny(payload, "input-messages", "input_messages")
+		if len(msgs) > 0 {
+			msg = strings.Join(msgs, " ")
+		}
+	}
+	msg = strings.Join(strings.Fields(msg), " ")
+	if len(msg) > 180 {
+		msg = msg[:177] + "..."
+	}
+	return msg
 }
 
 func getString(payload map[string]any, key string) string {
@@ -514,20 +644,266 @@ func getString(payload map[string]any, key string) string {
 	if !ok {
 		return ""
 	}
-	return s
+	return strings.TrimSpace(s)
 }
 
-func sendNotification(title, message string) error {
+func getStringAny(payload map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if s := getString(payload, key); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+func getStringSliceAny(payload map[string]any, keys ...string) []string {
+	for _, key := range keys {
+		v, ok := payload[key]
+		if !ok || v == nil {
+			continue
+		}
+
+		switch typed := v.(type) {
+		case []string:
+			out := []string{}
+			for _, item := range typed {
+				item = strings.TrimSpace(item)
+				if item != "" {
+					out = append(out, item)
+				}
+			}
+			if len(out) > 0 {
+				return out
+			}
+		case []any:
+			out := []string{}
+			for _, item := range typed {
+				itemStr := strings.TrimSpace(fmt.Sprintf("%v", item))
+				if itemStr != "" {
+					out = append(out, itemStr)
+				}
+			}
+			if len(out) > 0 {
+				return out
+			}
+		}
+	}
+	return nil
+}
+
+func notificationGroup(kind, threadID string) string {
+	kind = sanitizeID(kind)
+	if kind == "" {
+		kind = "event"
+	}
+	if threadID == "" {
+		return "codex-notify-" + kind
+	}
+	return fmt.Sprintf("codex-notify-%s-%s", kind, sanitizeID(threadID))
+}
+
+func sanitizeID(v string) string {
+	if v == "" {
+		return ""
+	}
+	var b strings.Builder
+	for _, r := range v {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '.' || r == '_' || r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('-')
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
+func buildActionCommand(action, threadID string) string {
+	executable := appName
+	if path, err := os.Executable(); err == nil && strings.TrimSpace(path) != "" {
+		executable = path
+	}
+
+	parts := []string{
+		shellQuote(executable),
+		"action",
+		shellQuote(action),
+	}
+	if threadID != "" {
+		parts = append(parts, "--thread-id", shellQuote(threadID))
+	}
+	return strings.Join(parts, " ")
+}
+
+func shellQuote(v string) string {
+	if v == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(v, "'", `'"'"'`) + "'"
+}
+
+func terminalBundleID() string {
+	v := strings.TrimSpace(os.Getenv("CODEX_NOTIFY_TERMINAL_BUNDLE_ID"))
+	if v != "" {
+		return v
+	}
+	return defaultTerminalID
+}
+
+func approveKeySequence() []string {
+	return keySequenceFromEnv("CODEX_NOTIFY_APPROVE_KEYS", defaultApproveSeq)
+}
+
+func rejectKeySequence() []string {
+	return keySequenceFromEnv("CODEX_NOTIFY_REJECT_KEYS", defaultRejectSeq)
+}
+
+func keySequenceFromEnv(key, fallback string) []string {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		raw = fallback
+	}
+	parts := strings.Split(raw, ",")
+	out := []string{}
+	for _, part := range parts {
+		token := strings.TrimSpace(part)
+		if token != "" {
+			out = append(out, token)
+		}
+	}
+	if len(out) == 0 && fallback != "" {
+		out = append(out, strings.Split(fallback, ",")...)
+	}
+	return out
+}
+
+func approvalActionsEnabled() bool {
+	v := strings.TrimSpace(strings.ToLower(os.Getenv("CODEX_NOTIFY_ENABLE_APPROVAL_ACTIONS")))
+	if v == "" {
+		return true
+	}
+	return v == "1" || v == "true" || v == "yes" || v == "on"
+}
+
+func activateApplication(bundleID string) error {
+	path, ok := lookupCmd("osascript")
+	if !ok {
+		return errors.New("osascript not found")
+	}
+
+	script := fmt.Sprintf(`tell application id "%s" to activate`, escapeAppleScript(bundleID))
+	cmd := exec.Command(path, "-e", script)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("activate app failed: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func sendActionKeys(bundleID string, seq []string, threadID string) error {
+	if err := activateApplication(bundleID); err != nil {
+		return err
+	}
+	time.Sleep(150 * time.Millisecond)
+
+	if len(seq) == 0 {
+		return nil
+	}
+	return sendKeySequence(seq, threadID)
+}
+
+func sendKeySequence(seq []string, threadID string) error {
+	path, ok := lookupCmd("osascript")
+	if !ok {
+		return errors.New("osascript not found")
+	}
+
+	for _, token := range seq {
+		token = strings.TrimSpace(token)
+		if token == "" {
+			continue
+		}
+
+		var script string
+		if code, special := keyCodeForToken(token); special {
+			script = fmt.Sprintf(`tell application "System Events" to key code %d`, code)
+		} else {
+			script = fmt.Sprintf(`tell application "System Events" to keystroke "%s"`, escapeAppleScript(token))
+		}
+
+		cmd := exec.Command(path, "-e", script)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			if threadID != "" {
+				return fmt.Errorf("send key for thread %s: %w (%s)", threadID, err, strings.TrimSpace(string(out)))
+			}
+			return fmt.Errorf("send key: %w (%s)", err, strings.TrimSpace(string(out)))
+		}
+		time.Sleep(80 * time.Millisecond)
+	}
+
+	return nil
+}
+
+func keyCodeForToken(token string) (int, bool) {
+	switch strings.ToLower(strings.TrimSpace(token)) {
+	case "enter", "return":
+		return 36, true
+	case "tab":
+		return 48, true
+	case "esc", "escape":
+		return 53, true
+	case "space":
+		return 49, true
+	case "up":
+		return 126, true
+	case "down":
+		return 125, true
+	case "left":
+		return 123, true
+	case "right":
+		return 124, true
+	default:
+		return 0, false
+	}
+}
+
+func sendNotification(req notificationRequest) error {
 	if runtime.GOOS != "darwin" {
 		return fmt.Errorf("unsupported OS: %s (macOS only)", runtime.GOOS)
 	}
 
+	title := req.Title
+	if title == "" {
+		title = "Codex"
+	}
+	message := req.Message
+	if message == "" {
+		message = "通知イベントを受信しました。"
+	}
+	group := req.Group
+	if group == "" {
+		group = "codex-notify"
+	}
+
 	if path, ok := lookupCmd("terminal-notifier"); ok {
-		cmd := exec.Command(path,
+		args := []string{
 			"-title", title,
 			"-message", message,
-			"-group", "codex-notify",
-		)
+			"-group", group,
+		}
+		if req.ExecuteOnClick != "" {
+			args = append(args, "-execute", req.ExecuteOnClick)
+		}
+		if req.ActivateBundleID != "" {
+			args = append(args, "-activate", req.ActivateBundleID)
+		}
+
+		cmd := exec.Command(path, args...)
 		if err := cmd.Run(); err == nil {
 			return nil
 		}

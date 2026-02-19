@@ -8,8 +8,8 @@
 ## 2. Tag and push
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag vX.Y.Z
+git push origin vX.Y.Z
 ```
 
 This triggers `.github/workflows/release.yml` and creates a GitHub Release with:
@@ -22,7 +22,7 @@ This triggers `.github/workflows/release.yml` and creates a GitHub Release with:
 Generate the Formula content:
 
 ```bash
-./scripts/gen_formula.sh v0.1.0
+./scripts/gen_formula.sh vX.Y.Z
 ```
 
 Copy the output into `Formula/codex-notify.rb` in `MiUPa/homebrew-codex-notify`, then commit and push there.

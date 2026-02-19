@@ -12,6 +12,12 @@
 Codex already supports notifications, but behavior can depend on terminal support.
 `codex-notify` gives you a direct macOS desktop notification path via Codex `notify` hook.
 
+## Demo
+
+Illustrative notification flow for `approval-requested`:
+
+![codex-notify demo](docs/assets/demo-notification.svg)
+
 ## Install (Homebrew)
 
 ```bash
@@ -144,6 +150,14 @@ git push origin vX.Y.Z
 ```
 
 Use the generated output to update `Formula/codex-notify.rb` in your tap repo.
+
+## Contributing
+
+See `CONTRIBUTING.md`.
+
+## Changelog
+
+See `CHANGELOG.md`.
 
 ## License
 

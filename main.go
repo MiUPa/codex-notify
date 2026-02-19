@@ -324,7 +324,7 @@ func configHasCodexNotify(content []byte) (bool, error) {
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
-		if isRootNotifyLine(trimmed) && strings.Contains(trimmed, "codex-notify") {
+		if isCodexNotifyHookLine(trimmed) {
 			return true, nil
 		}
 	}
@@ -365,7 +365,7 @@ func removeCodexNotifyLine(content []byte) ([]byte, bool) {
 
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if isRootNotifyLine(trimmed) && strings.Contains(trimmed, "codex-notify") {
+		if isCodexNotifyHookLine(trimmed) {
 			removed = true
 			continue
 		}
@@ -564,4 +564,18 @@ func lookupCmd(name string) (string, bool) {
 
 func isRootNotifyLine(trimmedLine string) bool {
 	return rootNotifyLineRE.MatchString(trimmedLine)
+}
+
+func isCodexNotifyHookLine(trimmedLine string) bool {
+	if !isRootNotifyLine(trimmedLine) {
+		return false
+	}
+
+	parts := strings.SplitN(trimmedLine, "=", 2)
+	if len(parts) != 2 {
+		return false
+	}
+
+	rhs := strings.TrimSpace(parts[1])
+	return strings.Contains(rhs, `"codex-notify"`) && strings.Contains(rhs, `"hook"`)
 }

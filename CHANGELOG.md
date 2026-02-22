@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- `approval-requested` now defaults to a single notification that opens a chooser dialog (`Open`, `Approve`, `Reject`) on click.
+- Added `codex-notify action choose` for chooser-based handling.
+- Added `CODEX_NOTIFY_APPROVAL_UI` (`single`/`multi`) to switch between single-notification and legacy multi-notification behavior.
+
 ## [0.2.1] - 2026-02-20
 
 ### Fixed

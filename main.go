@@ -24,11 +24,14 @@ const (
 	defaultTerminalID = "com.mitchellh.ghostty"
 	defaultApproveSeq = "y,enter"
 	defaultRejectSeq  = "n,enter"
+	approvalUISingle  = "single"
+	approvalUIMulti   = "multi"
 )
 
 var (
-	rootNotifyLineRE  = regexp.MustCompile(`^notify\s*=`)
-	codexHookArrayRE = regexp.MustCompile(`\[\s*"(?:[^"]*/)?codex-notify"\s*,\s*"hook"\s*\]`)
+	rootNotifyLineRE   = regexp.MustCompile(`^notify\s*=`)
+	codexHookArrayRE   = regexp.MustCompile(`\[\s*"(?:[^"]*/)?codex-notify"\s*,\s*"hook"\s*\]`)
+	errDialogCanceled = errors.New("dialog canceled")
 )
 
 type notificationRequest struct {
@@ -80,7 +83,7 @@ Usage:
   %s doctor [--config path]
   %s test [message]
   %s hook [json-payload]
-  %s action <open|approve|reject> [--thread-id id]
+  %s action <open|approve|reject|choose> [--thread-id id]
   %s uninstall [--restore-config] [--config path]
 
 Commands:
@@ -88,7 +91,7 @@ Commands:
   doctor     Validate runtime requirements and config wiring.
   test       Send a local test notification.
   hook       Receive Codex notify payload and raise macOS notification.
-  action     Execute click action (open terminal / send approve or reject keys).
+  action     Execute click action (open terminal / choose / send approve or reject keys).
   uninstall  Restore config from latest backup created by init.
 `, appName, appName, appName, appName, appName, appName, appName)
 }
@@ -264,7 +267,7 @@ func runHook(args []string) error {
 
 func runAction(args []string) error {
 	if len(args) == 0 {
-		return errors.New("action requires one of: open, approve, reject")
+		return errors.New("action requires one of: open, approve, reject, choose")
 	}
 
 	action := strings.ToLower(strings.TrimSpace(args[0]))
@@ -280,6 +283,8 @@ func runAction(args []string) error {
 	switch action {
 	case "open":
 		return activateApplication(bundleID)
+	case "choose":
+		return runChooseAction(bundleID, *threadID)
 	case "approve":
 		return sendActionKeys(bundleID, approveKeySequence(), *threadID)
 	case "reject":
@@ -556,20 +561,24 @@ func buildHookNotifications(payload map[string]any) ([]notificationRequest, erro
 
 	requests := []notificationRequest{base}
 	if eventName == "approval-requested" && approvalActionsEnabled() {
-		requests = append(requests,
-			notificationRequest{
-				Title:          "Codex: Approve",
-				Message:        "クリックで承認入力を送信",
-				Group:          notificationGroup("approve", threadID),
-				ExecuteOnClick: buildActionCommand("approve", threadID),
-			},
-			notificationRequest{
-				Title:          "Codex: Reject",
-				Message:        "クリックで拒否入力を送信",
-				Group:          notificationGroup("reject", threadID),
-				ExecuteOnClick: buildActionCommand("reject", threadID),
-			},
-		)
+		if approvalUIStyle() == approvalUIMulti {
+			requests = append(requests,
+				notificationRequest{
+					Title:          "Codex: Approve",
+					Message:        "クリックで承認入力を送信",
+					Group:          notificationGroup("approve", threadID),
+					ExecuteOnClick: buildActionCommand("approve", threadID),
+				},
+				notificationRequest{
+					Title:          "Codex: Reject",
+					Message:        "クリックで拒否入力を送信",
+					Group:          notificationGroup("reject", threadID),
+					ExecuteOnClick: buildActionCommand("reject", threadID),
+				},
+			)
+		} else {
+			requests[0].ExecuteOnClick = buildActionCommand("choose", threadID)
+		}
 	}
 
 	return requests, nil
@@ -794,6 +803,18 @@ func approvalActionsEnabled() bool {
 	return v == "1" || v == "true" || v == "yes" || v == "on"
 }
 
+func approvalUIStyle() string {
+	v := strings.TrimSpace(strings.ToLower(os.Getenv("CODEX_NOTIFY_APPROVAL_UI")))
+	switch v {
+	case "", approvalUISingle:
+		return approvalUISingle
+	case approvalUIMulti:
+		return approvalUIMulti
+	default:
+		return approvalUISingle
+	}
+}
+
 func activateApplication(bundleID string) error {
 	path, ok := lookupCmd("osascript")
 	if !ok {
@@ -818,6 +839,73 @@ func sendActionKeys(bundleID string, seq []string, threadID string) error {
 		return nil
 	}
 	return sendKeySequence(seq, threadID)
+}
+
+func runChooseAction(bundleID, threadID string) error {
+	choice, err := chooseApprovalAction(threadID)
+	if err != nil {
+		if errors.Is(err, errDialogCanceled) {
+			return nil
+		}
+		return err
+	}
+
+	switch choice {
+	case "open":
+		return activateApplication(bundleID)
+	case "approve":
+		return sendActionKeys(bundleID, approveKeySequence(), threadID)
+	case "reject":
+		return sendActionKeys(bundleID, rejectKeySequence(), threadID)
+	default:
+		return fmt.Errorf("unknown chosen action: %s", choice)
+	}
+}
+
+func chooseApprovalAction(threadID string) (string, error) {
+	path, ok := lookupCmd("osascript")
+	if !ok {
+		return "", errors.New("osascript not found")
+	}
+
+	prompt := "承認待ちです。実行する操作を選択してください。"
+	if threadID != "" {
+		prompt = fmt.Sprintf("thread: %s\\n承認待ちです。実行する操作を選択してください。", threadID)
+	}
+
+	script := fmt.Sprintf(`try
+	set dialogResult to display dialog "%s" with title "Codex Notify" buttons {"Open", "Approve", "Reject"} default button "Open" giving up after 20
+	if gave up of dialogResult then
+		return "none"
+	end if
+	set selectedButton to button returned of dialogResult
+	if selectedButton is "Open" then
+		return "open"
+	else if selectedButton is "Approve" then
+		return "approve"
+	else
+		return "reject"
+	end if
+on error number -128
+	return "none"
+end try`, escapeAppleScript(prompt))
+
+	cmd := exec.Command(path, "-e", script)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("choose action failed: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
+
+	choice := strings.ToLower(strings.TrimSpace(string(out)))
+	if choice == "" || choice == "none" {
+		return "", errDialogCanceled
+	}
+	switch choice {
+	case "open", "approve", "reject":
+		return choice, nil
+	default:
+		return "", fmt.Errorf("unknown choice from dialog: %s", choice)
+	}
 }
 
 func sendKeySequence(seq []string, threadID string) error {

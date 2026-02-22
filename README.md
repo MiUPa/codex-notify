@@ -74,7 +74,7 @@ codex-notify init [--replace] [--config path]
 codex-notify doctor [--config path]
 codex-notify test [message]
 codex-notify hook [json-payload]
-codex-notify action <open|approve|reject> [--thread-id id]
+codex-notify action <open|approve|reject|choose> [--thread-id id]
 codex-notify uninstall [--restore-config] [--config path]
 ```
 
@@ -103,20 +103,20 @@ codex-notify uninstall --restore-config
 ## Event Support
 
 - `agent-turn-complete`: supported
-- `approval-requested`: supported, with action notifications (`Open`, `Approve`, `Reject`)
+- `approval-requested`: supported with selectable actions (`Open`, `Approve`, `Reject`)
 - Unknown events: generic notification
 
-## Action Notifications
+## Approval Actions
 
-For `approval-requested`, `codex-notify` sends:
-- Base notification (click to open terminal)
-- Approve notification (click to send approve key sequence)
-- Reject notification (click to send reject key sequence)
+`approval-requested` behavior is configurable:
+- `single` (default): one notification, click opens a chooser dialog (`Open` / `Approve` / `Reject`)
+- `multi`: three notifications (`Open`, `Approve`, `Reject`) like previous behavior
 
 Default behavior:
 - Terminal app bundle id: `com.mitchellh.ghostty`
 - Approve key sequence: `y,enter`
 - Reject key sequence: `n,enter`
+- Approval UI mode: `single`
 
 Override with environment variables:
 
@@ -125,6 +125,7 @@ export CODEX_NOTIFY_TERMINAL_BUNDLE_ID="com.mitchellh.ghostty"
 export CODEX_NOTIFY_APPROVE_KEYS="y,enter"
 export CODEX_NOTIFY_REJECT_KEYS="n,enter"
 export CODEX_NOTIFY_ENABLE_APPROVAL_ACTIONS="1"
+export CODEX_NOTIFY_APPROVAL_UI="single" # or "multi"
 ```
 
 Important:

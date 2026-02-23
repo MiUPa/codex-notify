@@ -5,9 +5,11 @@ All notable changes to this project are documented in this file.
 ## [Unreleased]
 
 ### Changed
-- `approval-requested` now defaults to a single notification that opens a chooser dialog (`Open`, `Approve`, `Reject`) on click.
-- Added `codex-notify action choose` for chooser-based handling.
-- Added `CODEX_NOTIFY_APPROVAL_UI` (`single`/`multi`) to switch between single-notification and legacy multi-notification behavior.
+- `approval-requested` now defaults to popup UX (`popup`) with visible choice buttons instead of notification action menus.
+- Popup buttons are now dynamic: if payload has two choices (for example `yes/no`), only two buttons are shown.
+- Added `codex-notify action submit --text ...` so unknown option labels can still be sent as typed input.
+- Added `single` as an alias of `popup` for backward compatibility.
+- Added `CODEX_NOTIFY_ENABLE_POPUP_APPROVAL_ACTIONS` (with legacy alias `CODEX_NOTIFY_ENABLE_NATIVE_APPROVAL_ACTIONS`) and `CODEX_NOTIFY_APPROVAL_TIMEOUT_SECONDS`.
 
 ## [0.2.1] - 2026-02-20
 

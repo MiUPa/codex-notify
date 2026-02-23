@@ -3,6 +3,9 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
+	_ "embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -14,6 +17,7 @@ import (
 	"regexp"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -24,15 +28,24 @@ const (
 	defaultTerminalID = "com.mitchellh.ghostty"
 	defaultApproveSeq = "y,enter"
 	defaultRejectSeq  = "n,enter"
+	approvalUIPopup   = "popup"
 	approvalUISingle  = "single"
 	approvalUIMulti   = "multi"
+
+	defaultApprovalPromptTimeoutSeconds = 45
+	helperSourceFilename                = "approval_action_notifier.swift"
+	helperBinaryName                    = "approval_action_notifier"
+	helperHashName                      = "approval_action_notifier.sha256"
 )
 
 var (
-	rootNotifyLineRE   = regexp.MustCompile(`^notify\s*=`)
-	codexHookArrayRE   = regexp.MustCompile(`\[\s*"(?:[^"]*/)?codex-notify"\s*,\s*"hook"\s*\]`)
+	rootNotifyLineRE  = regexp.MustCompile(`^notify\s*=`)
+	codexHookArrayRE  = regexp.MustCompile(`\[\s*"(?:[^"]*/)?codex-notify"\s*,\s*"hook"\s*\]`)
 	errDialogCanceled = errors.New("dialog canceled")
 )
+
+//go:embed internal/swift/approval_action_notifier.swift
+var approvalActionNotifierSource string
 
 type notificationRequest struct {
 	Title            string
@@ -83,7 +96,7 @@ Usage:
   %s doctor [--config path]
   %s test [message]
   %s hook [json-payload]
-  %s action <open|approve|reject|choose> [--thread-id id]
+  %s action <open|approve|reject|choose|submit> [--thread-id id] [--text value]
   %s uninstall [--restore-config] [--config path]
 
 Commands:
@@ -91,7 +104,7 @@ Commands:
   doctor     Validate runtime requirements and config wiring.
   test       Send a local test notification.
   hook       Receive Codex notify payload and raise macOS notification.
-  action     Execute click action (open terminal / choose / send approve or reject keys).
+  action     Execute click action (open terminal / choose / submit text / send approve or reject keys).
   uninstall  Restore config from latest backup created by init.
 `, appName, appName, appName, appName, appName, appName, appName)
 }
@@ -199,6 +212,15 @@ func runDoctor(args []string) error {
 		problems++
 	}
 
+	if approvalActionsEnabled() && approvalUIStyle() != approvalUIMulti {
+		swiftcPath, swiftcOK := lookupCmd("swiftc")
+		if swiftcOK {
+			fmt.Printf("[ OK ] swiftc: %s\n", swiftcPath)
+		} else {
+			fmt.Println("[WARN] swiftc: not found (approval popup helper will fall back to chooser dialog)")
+		}
+	}
+
 	cfg, err := readFileMaybe(cfgPath)
 	if err != nil {
 		return err
@@ -252,6 +274,12 @@ func runHook(args []string) error {
 		}
 	}
 
+	if shouldUseNativeApprovalNotification(payload) {
+		if err := sendNativeApprovalNotification(payload); err == nil {
+			return nil
+		}
+	}
+
 	requests, err := buildHookNotifications(payload)
 	if err != nil {
 		return err
@@ -267,7 +295,7 @@ func runHook(args []string) error {
 
 func runAction(args []string) error {
 	if len(args) == 0 {
-		return errors.New("action requires one of: open, approve, reject, choose")
+		return errors.New("action requires one of: open, approve, reject, choose, submit")
 	}
 
 	action := strings.ToLower(strings.TrimSpace(args[0]))
@@ -275,6 +303,7 @@ func runAction(args []string) error {
 	fs.SetOutput(io.Discard)
 
 	threadID := fs.String("thread-id", "", "thread id")
+	text := fs.String("text", "", "text payload for submit action")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -289,6 +318,11 @@ func runAction(args []string) error {
 		return sendActionKeys(bundleID, approveKeySequence(), *threadID)
 	case "reject":
 		return sendActionKeys(bundleID, rejectKeySequence(), *threadID)
+	case "submit":
+		if strings.TrimSpace(*text) == "" {
+			return errors.New("submit action requires --text")
+		}
+		return sendActionKeys(bundleID, []string{*text, "enter"}, *threadID)
 	default:
 		return fmt.Errorf("unknown action: %s", action)
 	}
@@ -753,6 +787,25 @@ func buildActionCommand(action, threadID string) string {
 	return strings.Join(parts, " ")
 }
 
+func buildSubmitActionCommand(text, threadID string) string {
+	executable := appName
+	if path, err := os.Executable(); err == nil && strings.TrimSpace(path) != "" {
+		executable = path
+	}
+
+	parts := []string{
+		shellQuote(executable),
+		"action",
+		"submit",
+		"--text",
+		shellQuote(text),
+	}
+	if threadID != "" {
+		parts = append(parts, "--thread-id", shellQuote(threadID))
+	}
+	return strings.Join(parts, " ")
+}
+
 func shellQuote(v string) string {
 	if v == "" {
 		return "''"
@@ -806,13 +859,223 @@ func approvalActionsEnabled() bool {
 func approvalUIStyle() string {
 	v := strings.TrimSpace(strings.ToLower(os.Getenv("CODEX_NOTIFY_APPROVAL_UI")))
 	switch v {
-	case "", approvalUISingle:
-		return approvalUISingle
+	case "", approvalUIPopup, approvalUISingle:
+		return approvalUIPopup
 	case approvalUIMulti:
 		return approvalUIMulti
 	default:
-		return approvalUISingle
+		return approvalUIPopup
 	}
+}
+
+func shouldUseNativeApprovalNotification(payload map[string]any) bool {
+	if payloadEventName(payload) != "approval-requested" {
+		return false
+	}
+	if !approvalActionsEnabled() {
+		return false
+	}
+	if approvalUIStyle() == approvalUIMulti {
+		return false
+	}
+
+	v := strings.TrimSpace(strings.ToLower(os.Getenv("CODEX_NOTIFY_ENABLE_POPUP_APPROVAL_ACTIONS")))
+	if v == "" {
+		v = strings.TrimSpace(strings.ToLower(os.Getenv("CODEX_NOTIFY_ENABLE_NATIVE_APPROVAL_ACTIONS")))
+	}
+	if v == "" {
+		return true
+	}
+	return v == "1" || v == "true" || v == "yes" || v == "on"
+}
+
+func sendNativeApprovalNotification(payload map[string]any) error {
+	helperPath, err := ensureApprovalActionHelper()
+	if err != nil {
+		return err
+	}
+
+	threadID := payloadThreadID(payload)
+	title, message := renderPayloadMessage(payload)
+	choices := approvalChoicesFromPayload(payload, threadID)
+	if len(choices) == 0 {
+		choices = defaultApprovalChoices(threadID)
+	}
+
+	args := []string{
+		"--title", title,
+		"--message", message,
+		"--identifier", notificationGroup("approval-native", threadID),
+		"--timeout-seconds", strconv.Itoa(approvalActionTimeoutSeconds()),
+	}
+	for _, choice := range choices {
+		args = append(args, "--choice-label", choice.Label)
+		args = append(args, "--choice-cmd", choice.Command)
+	}
+
+	cmd := exec.Command(helperPath, args...)
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start native approval notifier: %w", err)
+	}
+	return nil
+}
+
+func approvalActionTimeoutSeconds() int {
+	raw := strings.TrimSpace(os.Getenv("CODEX_NOTIFY_APPROVAL_TIMEOUT_SECONDS"))
+	if raw == "" {
+		return defaultApprovalPromptTimeoutSeconds
+	}
+
+	parsed, err := strconv.Atoi(raw)
+	if err != nil {
+		return defaultApprovalPromptTimeoutSeconds
+	}
+	if parsed < 5 {
+		return 5
+	}
+	if parsed > 300 {
+		return 300
+	}
+	return parsed
+}
+
+func ensureApprovalActionHelper() (string, error) {
+	cacheDir, err := os.UserCacheDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve user cache dir: %w", err)
+	}
+
+	helperDir := filepath.Join(cacheDir, appName)
+	if err := os.MkdirAll(helperDir, 0o755); err != nil {
+		return "", fmt.Errorf("create helper dir: %w", err)
+	}
+
+	sourcePath := filepath.Join(helperDir, helperSourceFilename)
+	binaryPath := filepath.Join(helperDir, helperBinaryName)
+	hashPath := filepath.Join(helperDir, helperHashName)
+
+	expectedHash := helperSourceHash(approvalActionNotifierSource)
+	currentHash, _ := os.ReadFile(hashPath)
+	if strings.TrimSpace(string(currentHash)) == expectedHash {
+		if info, err := os.Stat(binaryPath); err == nil && info.Mode().IsRegular() {
+			return binaryPath, nil
+		}
+	}
+
+	swiftcPath, ok := lookupCmd("swiftc")
+	if !ok {
+		return "", errors.New("swiftc not found")
+	}
+
+	if err := writeFileAtomic(sourcePath, []byte(approvalActionNotifierSource), 0o644); err != nil {
+		return "", fmt.Errorf("write helper source: %w", err)
+	}
+
+	tmpBinaryPath := binaryPath + ".tmp"
+	_ = os.Remove(tmpBinaryPath)
+
+	compileCmd := exec.Command(swiftcPath, "-O", "-suppress-warnings", sourcePath, "-o", tmpBinaryPath)
+	if out, err := compileCmd.CombinedOutput(); err != nil {
+		_ = os.Remove(tmpBinaryPath)
+		return "", fmt.Errorf("compile helper failed: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
+
+	if err := os.Chmod(tmpBinaryPath, 0o755); err != nil {
+		_ = os.Remove(tmpBinaryPath)
+		return "", fmt.Errorf("chmod helper: %w", err)
+	}
+	if err := os.Rename(tmpBinaryPath, binaryPath); err != nil {
+		_ = os.Remove(tmpBinaryPath)
+		return "", fmt.Errorf("install helper: %w", err)
+	}
+	if err := writeFileAtomic(hashPath, []byte(expectedHash+"\n"), 0o644); err != nil {
+		return "", fmt.Errorf("write helper hash: %w", err)
+	}
+
+	return binaryPath, nil
+}
+
+func helperSourceHash(source string) string {
+	sum := sha256.Sum256([]byte(source))
+	return hex.EncodeToString(sum[:])
+}
+
+type approvalChoice struct {
+	Label   string
+	Command string
+}
+
+func defaultApprovalChoices(threadID string) []approvalChoice {
+	return []approvalChoice{
+		{Label: "Open", Command: buildActionCommand("open", threadID)},
+		{Label: "Approve", Command: buildActionCommand("approve", threadID)},
+		{Label: "Reject", Command: buildActionCommand("reject", threadID)},
+	}
+}
+
+func approvalChoicesFromPayload(payload map[string]any, threadID string) []approvalChoice {
+	options := payloadApprovalOptions(payload)
+	if len(options) == 0 {
+		return nil
+	}
+
+	choices := make([]approvalChoice, 0, len(options))
+	for i, option := range options {
+		label := strings.TrimSpace(option)
+		if label == "" {
+			continue
+		}
+
+		action := actionForApprovalOption(label, i, len(options))
+		command := buildSubmitActionCommand(label, threadID)
+		if action != "" {
+			command = buildActionCommand(action, threadID)
+		}
+		choices = append(choices, approvalChoice{
+			Label:   label,
+			Command: command,
+		})
+	}
+	return choices
+}
+
+func payloadApprovalOptions(payload map[string]any) []string {
+	return getStringSliceAny(
+		payload,
+		"approval-options",
+		"approval_options",
+		"options",
+		"choices",
+		"actions",
+	)
+}
+
+func actionForApprovalOption(label string, idx, total int) string {
+	norm := strings.ToLower(strings.TrimSpace(label))
+	norm = strings.ReplaceAll(norm, " ", "")
+	norm = strings.ReplaceAll(norm, "-", "")
+	norm = strings.ReplaceAll(norm, "_", "")
+
+	switch norm {
+	case "open", "show", "focus":
+		return "open"
+	case "approve", "approved", "allow", "yes", "y", "ok":
+		return "approve"
+	case "reject", "denied", "deny", "no", "n", "cancel":
+		return "reject"
+	}
+
+	// Common approval UX is binary yes/no; map by position if labels are unknown.
+	if total == 2 {
+		if idx == 0 {
+			return "approve"
+		}
+		return "reject"
+	}
+
+	return ""
 }
 
 func activateApplication(bundleID string) error {
@@ -874,7 +1137,7 @@ func chooseApprovalAction(threadID string) (string, error) {
 	}
 
 	script := fmt.Sprintf(`try
-	set dialogResult to display dialog "%s" with title "Codex Notify" buttons {"Open", "Approve", "Reject"} default button "Open" giving up after 20
+	set dialogResult to display dialog "%s" with title "Codex Notify" buttons {"Open", "Approve", "Reject"} default button "Open" giving up after %d
 	if gave up of dialogResult then
 		return "none"
 	end if
@@ -888,7 +1151,7 @@ func chooseApprovalAction(threadID string) (string, error) {
 	end if
 on error number -128
 	return "none"
-end try`, escapeAppleScript(prompt))
+end try`, escapeAppleScript(prompt), approvalActionTimeoutSeconds())
 
 	cmd := exec.Command(path, "-e", script)
 	out, err := cmd.CombinedOutput()

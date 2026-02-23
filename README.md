@@ -14,7 +14,7 @@ Codex already supports notifications, but behavior can depend on terminal suppor
 
 ## Demo
 
-Illustrative notification flow for `approval-requested`:
+Illustrative approval flow for `approval-requested`:
 
 ![codex-notify demo](docs/assets/demo-notification.svg)
 
@@ -74,7 +74,7 @@ codex-notify init [--replace] [--config path]
 codex-notify doctor [--config path]
 codex-notify test [message]
 codex-notify hook [json-payload]
-codex-notify action <open|approve|reject|choose> [--thread-id id]
+codex-notify action <open|approve|reject|choose|submit> [--thread-id id] [--text value]
 codex-notify uninstall [--restore-config] [--config path]
 ```
 
@@ -109,14 +109,21 @@ codex-notify uninstall --restore-config
 ## Approval Actions
 
 `approval-requested` behavior is configurable:
-- `single` (default): one notification, click opens a chooser dialog (`Open` / `Approve` / `Reject`)
+- `popup` (default): corner popup with visible choice buttons
+  - shows all choices as buttons (for example, `yes/no` => 2 buttons)
+  - reads choices from payload keys like `options` / `choices` / `approval-options`
+  - if payload choices are unavailable, falls back to `Open / Approve / Reject`
+  - if popup helper is unavailable, falls back to chooser dialog
+- `single`: alias of `popup` (backward compatibility)
 - `multi`: three notifications (`Open`, `Approve`, `Reject`) like previous behavior
 
 Default behavior:
 - Terminal app bundle id: `com.mitchellh.ghostty`
 - Approve key sequence: `y,enter`
 - Reject key sequence: `n,enter`
-- Approval UI mode: `single`
+- Approval UI mode: `popup`
+- Popup helper: enabled
+- Popup timeout: `45` seconds
 
 Override with environment variables:
 
@@ -125,10 +132,14 @@ export CODEX_NOTIFY_TERMINAL_BUNDLE_ID="com.mitchellh.ghostty"
 export CODEX_NOTIFY_APPROVE_KEYS="y,enter"
 export CODEX_NOTIFY_REJECT_KEYS="n,enter"
 export CODEX_NOTIFY_ENABLE_APPROVAL_ACTIONS="1"
-export CODEX_NOTIFY_APPROVAL_UI="single" # or "multi"
+export CODEX_NOTIFY_ENABLE_POPUP_APPROVAL_ACTIONS="1"
+export CODEX_NOTIFY_ENABLE_NATIVE_APPROVAL_ACTIONS="1" # legacy alias
+export CODEX_NOTIFY_APPROVAL_UI="popup" # or "multi"
+export CODEX_NOTIFY_APPROVAL_TIMEOUT_SECONDS="45"
 ```
 
 Important:
+- Popup UI uses a Swift helper that is compiled on first use (`swiftc` required).
 - Key injection uses AppleScript (`System Events`), which may require Accessibility permission.
 - Approve/Reject keys are sent to the focused terminal after it is activated.
 

@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- Unified notification UI to bottom-right popup by default for all events (`test`, `agent-turn-complete`, `approval-requested`, unknown events).
+- Added `CODEX_NOTIFY_NOTIFICATION_UI` (`popup`/`system`) to control popup usage globally.
+
 ## [0.3.0] - 2026-02-23
 
 ### Changed

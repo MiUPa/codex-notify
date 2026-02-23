@@ -23,14 +23,16 @@ import (
 )
 
 const (
-	appName           = "codex-notify"
-	defaultNotifyLine = `notify = ["codex-notify", "hook"]`
-	defaultTerminalID = "com.mitchellh.ghostty"
-	defaultApproveSeq = "y,enter"
-	defaultRejectSeq  = "n,enter"
-	approvalUIPopup   = "popup"
-	approvalUISingle  = "single"
-	approvalUIMulti   = "multi"
+	appName              = "codex-notify"
+	defaultNotifyLine    = `notify = ["codex-notify", "hook"]`
+	defaultTerminalID    = "com.mitchellh.ghostty"
+	defaultApproveSeq    = "y,enter"
+	defaultRejectSeq     = "n,enter"
+	approvalUIPopup      = "popup"
+	approvalUISingle     = "single"
+	approvalUIMulti      = "multi"
+	notificationUIPopup  = "popup"
+	notificationUISystem = "system"
 
 	defaultApprovalPromptTimeoutSeconds = 45
 	helperSourceFilename                = "approval_action_notifier.swift"
@@ -48,11 +50,12 @@ var (
 var approvalActionNotifierSource string
 
 type notificationRequest struct {
-	Title            string
-	Message          string
-	Group            string
-	ExecuteOnClick   string
-	ActivateBundleID string
+	Title             string
+	Message           string
+	Group             string
+	ExecuteOnClick    string
+	ActivateBundleID  string
+	PopupPrimaryLabel string
 }
 
 func main() {
@@ -212,12 +215,12 @@ func runDoctor(args []string) error {
 		problems++
 	}
 
-	if approvalActionsEnabled() && approvalUIStyle() != approvalUIMulti {
+	if notificationUIStyle() == notificationUIPopup {
 		swiftcPath, swiftcOK := lookupCmd("swiftc")
 		if swiftcOK {
 			fmt.Printf("[ OK ] swiftc: %s\n", swiftcPath)
 		} else {
-			fmt.Println("[WARN] swiftc: not found (approval popup helper will fall back to chooser dialog)")
+			fmt.Println("[WARN] swiftc: not found (popup UI will fall back to system notifications)")
 		}
 	}
 
@@ -255,9 +258,11 @@ func runTest(args []string) error {
 		message = strings.Join(args, " ")
 	}
 	return sendNotification(notificationRequest{
-		Title:   "Codex Notify",
-		Message: message,
-		Group:   "codex-notify-test",
+		Title:             "Codex Notify",
+		Message:           message,
+		Group:             "codex-notify-test",
+		ExecuteOnClick:    buildActionCommand("open", ""),
+		PopupPrimaryLabel: "Open",
 	})
 }
 
@@ -598,16 +603,18 @@ func buildHookNotifications(payload map[string]any) ([]notificationRequest, erro
 		if approvalUIStyle() == approvalUIMulti {
 			requests = append(requests,
 				notificationRequest{
-					Title:          "Codex: Approve",
-					Message:        "クリックで承認入力を送信",
-					Group:          notificationGroup("approve", threadID),
-					ExecuteOnClick: buildActionCommand("approve", threadID),
+					Title:             "Codex: Approve",
+					Message:           "クリックで承認入力を送信",
+					Group:             notificationGroup("approve", threadID),
+					ExecuteOnClick:    buildActionCommand("approve", threadID),
+					PopupPrimaryLabel: "Approve",
 				},
 				notificationRequest{
-					Title:          "Codex: Reject",
-					Message:        "クリックで拒否入力を送信",
-					Group:          notificationGroup("reject", threadID),
-					ExecuteOnClick: buildActionCommand("reject", threadID),
+					Title:             "Codex: Reject",
+					Message:           "クリックで拒否入力を送信",
+					Group:             notificationGroup("reject", threadID),
+					ExecuteOnClick:    buildActionCommand("reject", threadID),
+					PopupPrimaryLabel: "Reject",
 				},
 			)
 		} else {
@@ -868,7 +875,22 @@ func approvalUIStyle() string {
 	}
 }
 
+func notificationUIStyle() string {
+	v := strings.TrimSpace(strings.ToLower(os.Getenv("CODEX_NOTIFY_NOTIFICATION_UI")))
+	switch v {
+	case "", notificationUIPopup:
+		return notificationUIPopup
+	case notificationUISystem:
+		return notificationUISystem
+	default:
+		return notificationUIPopup
+	}
+}
+
 func shouldUseNativeApprovalNotification(payload map[string]any) bool {
+	if notificationUIStyle() == notificationUISystem {
+		return false
+	}
 	if payloadEventName(payload) != "approval-requested" {
 		return false
 	}
@@ -920,6 +942,74 @@ func sendNativeApprovalNotification(payload map[string]any) error {
 		return fmt.Errorf("start native approval notifier: %w", err)
 	}
 	return nil
+}
+
+func sendNativePopupNotification(req notificationRequest, title, message, group string) error {
+	helperPath, err := ensureApprovalActionHelper()
+	if err != nil {
+		return err
+	}
+
+	choices := popupChoicesForRequest(req)
+	args := []string{
+		"--title", title,
+		"--message", message,
+		"--identifier", group,
+		"--timeout-seconds", strconv.Itoa(approvalActionTimeoutSeconds()),
+	}
+	for _, choice := range choices {
+		args = append(args, "--choice-label", choice.Label)
+		args = append(args, "--choice-cmd", choice.Command)
+	}
+
+	cmd := exec.Command(helperPath, args...)
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start native popup notifier: %w", err)
+	}
+	return nil
+}
+
+func popupChoicesForRequest(req notificationRequest) []approvalChoice {
+	command := strings.TrimSpace(req.ExecuteOnClick)
+	label := strings.TrimSpace(req.PopupPrimaryLabel)
+	if label == "" {
+		label = inferPopupLabelFromCommand(command)
+	}
+	if label == "" {
+		if command == "" {
+			label = "Close"
+		} else {
+			label = "Open"
+		}
+	}
+
+	return []approvalChoice{
+		{Label: label, Command: command},
+	}
+}
+
+func inferPopupLabelFromCommand(command string) string {
+	cmd := strings.ToLower(strings.TrimSpace(command))
+	if cmd == "" {
+		return ""
+	}
+
+	switch {
+	case strings.Contains(cmd, " action approve"):
+		return "Approve"
+	case strings.Contains(cmd, " action reject"):
+		return "Reject"
+	case strings.Contains(cmd, " action choose"):
+		return "Choose"
+	case strings.Contains(cmd, " action submit"):
+		return "Submit"
+	case strings.Contains(cmd, " action open"):
+		return "Open"
+	default:
+		return "Open"
+	}
 }
 
 func approvalActionTimeoutSeconds() int {
@@ -1242,6 +1332,12 @@ func sendNotification(req notificationRequest) error {
 	group := req.Group
 	if group == "" {
 		group = "codex-notify"
+	}
+
+	if notificationUIStyle() == notificationUIPopup {
+		if err := sendNativePopupNotification(req, title, message, group); err == nil {
+			return nil
+		}
 	}
 
 	if path, ok := lookupCmd("terminal-notifier"); ok {

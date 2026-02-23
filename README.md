@@ -102,9 +102,9 @@ codex-notify uninstall --restore-config
 
 ## Event Support
 
-- `agent-turn-complete`: supported
-- `approval-requested`: supported with selectable actions (`Open`, `Approve`, `Reject`)
-- Unknown events: generic notification
+- All events use popup UI by default (bottom-right corner), including `test`, `agent-turn-complete`, `approval-requested`, and unknown events.
+- `approval-requested` supports selectable actions (`Open`, `Approve`, `Reject`) and dynamic payload choices.
+- If popup helper is unavailable, it falls back to system notification.
 
 ## Approval Actions
 
@@ -115,12 +115,13 @@ codex-notify uninstall --restore-config
   - if payload choices are unavailable, falls back to `Open / Approve / Reject`
   - if popup helper is unavailable, falls back to chooser dialog
 - `single`: alias of `popup` (backward compatibility)
-- `multi`: three notifications (`Open`, `Approve`, `Reject`) like previous behavior
+- `multi`: three popup notifications (`Open`, `Approve`, `Reject`) like previous behavior
 
 Default behavior:
 - Terminal app bundle id: `com.mitchellh.ghostty`
 - Approve key sequence: `y,enter`
 - Reject key sequence: `n,enter`
+- Notification UI mode: `popup`
 - Approval UI mode: `popup`
 - Popup helper: enabled
 - Popup timeout: `45` seconds
@@ -134,6 +135,7 @@ export CODEX_NOTIFY_REJECT_KEYS="n,enter"
 export CODEX_NOTIFY_ENABLE_APPROVAL_ACTIONS="1"
 export CODEX_NOTIFY_ENABLE_POPUP_APPROVAL_ACTIONS="1"
 export CODEX_NOTIFY_ENABLE_NATIVE_APPROVAL_ACTIONS="1" # legacy alias
+export CODEX_NOTIFY_NOTIFICATION_UI="popup" # or "system"
 export CODEX_NOTIFY_APPROVAL_UI="popup" # or "multi"
 export CODEX_NOTIFY_APPROVAL_TIMEOUT_SECONDS="45"
 ```

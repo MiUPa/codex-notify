@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
+  <title id="title">codex-notify unified popup demo</title>
+  <desc id="desc">Illustrative screenshot of codex-notify v0.3.1 showing bottom-right popup UI with action buttons.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0b1220"/>
+      <stop offset="55%" stop-color="#131f34"/>
+      <stop offset="100%" stop-color="#111827"/>
+    </linearGradient>
+    <linearGradient id="editor" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#111827"/>
+      <stop offset="100%" stop-color="#0f172a"/>
+    </linearGradient>
+    <linearGradient id="popup" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#111a2f"/>
+      <stop offset="100%" stop-color="#0d1627"/>
+    </linearGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="180%">
+      <feDropShadow dx="0" dy="16" stdDeviation="14" flood-color="#000000" flood-opacity="0.42"/>
+    </filter>
+    <filter id="soft" x="-30%" y="-30%" width="160%" height="180%">
+      <feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="#000000" flood-opacity="0.32"/>
+    </filter>
+  </defs>
+
+  <rect x="0" y="0" width="1280" height="720" fill="url(#bg)"/>
+  <circle cx="210" cy="90" r="260" fill="#334155" opacity="0.13"/>
+  <circle cx="1140" cy="650" r="280" fill="#2563eb" opacity="0.11"/>
+
+  <rect x="74" y="72" width="806" height="560" rx="18" fill="url(#editor)" stroke="#334155"/>
+  <rect x="74" y="72" width="806" height="48" rx="18" fill="#1f2937"/>
+  <circle cx="102" cy="96" r="7" fill="#ef4444"/>
+  <circle cx="124" cy="96" r="7" fill="#f59e0b"/>
+  <circle cx="146" cy="96" r="7" fill="#22c55e"/>
+  <text x="176" y="102" fill="#cbd5e1" font-family="SF Pro Display, Inter, Segoe UI, sans-serif" font-size="15" font-weight="600">codex CLI session</text>
+
+  <text x="110" y="164" fill="#93c5fd" font-family="Menlo, Monaco, monospace" font-size="17">$ codex run</text>
+  <text x="110" y="198" fill="#cbd5e1" font-family="Menlo, Monaco, monospace" font-size="15">Thinking... generating response...</text>
+  <text x="110" y="232" fill="#cbd5e1" font-family="Menlo, Monaco, monospace" font-size="15">event: approval-requested</text>
+  <text x="110" y="266" fill="#cbd5e1" font-family="Menlo, Monaco, monospace" font-size="15">options: Open / Approve / Reject</text>
+  <text x="110" y="332" fill="#34d399" font-family="Menlo, Monaco, monospace" font-size="15">&gt; codex-notify hook ...</text>
+  <text x="110" y="366" fill="#a7f3d0" font-family="Menlo, Monaco, monospace" font-size="15">popup shown at bottom-right</text>
+  <text x="110" y="540" fill="#94a3b8" font-family="Menlo, Monaco, monospace" font-size="13">v0.3.1: unified popup UI for all events</text>
+
+  <rect x="872" y="246" width="360" height="108" rx="16" fill="#111827" stroke="#334155" filter="url(#soft)"/>
+  <rect x="872" y="246" width="4" height="108" rx="2" fill="#3b82f6"/>
+  <text x="896" y="282" fill="#e5e7eb" font-family="SF Pro Display, Inter, Segoe UI, sans-serif" font-size="16" font-weight="600">Codex Notify</text>
+  <text x="896" y="306" fill="#9ca3af" font-family="SF Pro Display, Inter, Segoe UI, sans-serif" font-size="13">test notification also uses popup</text>
+  <rect x="1086" y="318" width="126" height="24" rx="10" fill="#2563eb" opacity="0.82"/>
+  <text x="1149" y="335" text-anchor="middle" fill="#f8fafc" font-family="SF Pro Display, Inter, Segoe UI, sans-serif" font-size="12" font-weight="600">Open</text>
+
+  <g filter="url(#shadow)">
+    <rect x="780" y="362" width="452" height="306" rx="20" fill="url(#popup)" stroke="#334155"/>
+    <rect x="780" y="362" width="5" height="306" rx="3" fill="#3b82f6"/>
+    <rect x="780" y="362" width="452" height="306" rx="20" fill="#60a5fa" opacity="0.06"/>
+    <circle cx="814" cy="397" r="11" fill="#1e3a8a"/>
+    <path d="M810 400 L814 389 L818 400 Z" fill="#93c5fd"/>
+    <text x="835" y="401" fill="#f8fafc" font-family="SF Pro Display, Inter, Segoe UI, sans-serif" font-size="17" font-weight="700">Codex: Approval Requested</text>
+    <text x="835" y="423" fill="#94a3b8" font-family="SF Pro Display, Inter, Segoe UI, sans-serif" font-size="12">codex-notify • codex-notify-approval</text>
+    <text x="810" y="462" fill="#d1d5db" font-family="SF Pro Display, Inter, Segoe UI, sans-serif" font-size="14">Approve command execution for deployment</text>
+    <text x="810" y="484" fill="#d1d5db" font-family="SF Pro Display, Inter, Segoe UI, sans-serif" font-size="14">to internal track?</text>
+
+    <rect x="810" y="505" width="392" height="5" rx="3" fill="#1f2937"/>
+    <rect x="810" y="505" width="236" height="5" rx="3" fill="#3b82f6"/>
+
+    <rect x="810" y="538" width="126" height="40" rx="11" fill="#334155" stroke="#475569"/>
+    <text x="873" y="563" text-anchor="middle" fill="#e2e8f0" font-family="SF Pro Display, Inter, Segoe UI, sans-serif" font-size="14" font-weight="600">Open</text>
+
+    <rect x="943" y="538" width="126" height="40" rx="11" fill="#2563eb" stroke="#3b82f6"/>
+    <text x="1006" y="563" text-anchor="middle" fill="#f8fafc" font-family="SF Pro Display, Inter, Segoe UI, sans-serif" font-size="14" font-weight="700">Approve</text>
+
+    <rect x="1076" y="538" width="126" height="40" rx="11" fill="#dc2626" stroke="#ef4444"/>
+    <text x="1139" y="563" text-anchor="middle" fill="#fef2f2" font-family="SF Pro Display, Inter, Segoe UI, sans-serif" font-size="14" font-weight="700">Reject</text>
+  </g>
+</svg>

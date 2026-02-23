@@ -4,6 +4,9 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Added new README demo asset for unified popup UI (`docs/assets/demo-popup-v031.svg`).
+
 ## [0.3.1] - 2026-02-23
 
 ### Changed

@@ -14,9 +14,9 @@ Codex already supports notifications, but behavior can depend on terminal suppor
 
 ## Demo
 
-Illustrative approval flow for `approval-requested`:
+Latest popup UI (v0.3.1, all events unified to bottom-right popup):
 
-![codex-notify demo](docs/assets/demo-notification.svg)
+![codex-notify popup demo](docs/assets/demo-popup-v031.svg)
 
 ## Install (Homebrew)
 

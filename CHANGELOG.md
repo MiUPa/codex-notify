@@ -7,6 +7,7 @@ All notable changes to this project are documented in this file.
 ### Changed
 - `approval-requested` now defaults to popup UX (`popup`) with visible choice buttons instead of notification action menus.
 - Popup buttons are now dynamic: if payload has two choices (for example `yes/no`), only two buttons are shown.
+- Refined popup visual style with semantic action button colors, subtle entrance/exit animation, and timeout progress bar.
 - Added `codex-notify action submit --text ...` so unknown option labels can still be sent as typed input.
 - Added `single` as an alias of `popup` for backward compatibility.
 - Added `CODEX_NOTIFY_ENABLE_POPUP_APPROVAL_ACTIONS` (with legacy alias `CODEX_NOTIFY_ENABLE_NATIVE_APPROVAL_ACTIONS`) and `CODEX_NOTIFY_APPROVAL_TIMEOUT_SECONDS`.

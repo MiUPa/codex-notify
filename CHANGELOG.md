@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-02-23
+
 ### Changed
 - `approval-requested` now defaults to popup UX (`popup`) with visible choice buttons instead of notification action menus.
 - Popup buttons are now dynamic: if payload has two choices (for example `yes/no`), only two buttons are shown.

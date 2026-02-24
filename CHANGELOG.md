@@ -7,6 +7,7 @@ All notable changes to this project are documented in this file.
 ### Added
 - Added new README demo asset for unified popup UI (`docs/assets/demo-popup-v031.svg`).
 - Added release workflow automation to update `MiUPa/homebrew-codex-notify` Formula after each version tag release.
+- Added a `main` branch sync workflow to automatically reflect Formula updates to `MiUPa/homebrew-codex-notify`.
 - Added Homebrew Formula `post_install` auto-setup (`codex-notify init`) so `brew install` can complete setup without manual init in standard cases.
 
 ### Changed

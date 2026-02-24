@@ -16,6 +16,12 @@ class CodexNotify < Formula
     bin.install "codex-notify"
   end
 
+  def post_install
+    system_command(bin/"codex-notify", args: ["init"])
+  rescue ErrorDuringExecution
+    opoo "Automatic Codex notify hook setup failed. Run `codex-notify init --replace` manually."
+  end
+
   test do
     assert_match "macOS desktop notifications for Codex CLI", shell_output("#{bin}/codex-notify help")
   end

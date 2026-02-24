@@ -38,6 +38,8 @@ const (
 	helperSourceFilename                = "approval_action_notifier.swift"
 	helperBinaryName                    = "approval_action_notifier"
 	helperHashName                      = "approval_action_notifier.sha256"
+	interactionLockName                 = "approval_interaction.lock"
+	interactionLockGraceSeconds         = 5
 )
 
 var (
@@ -270,6 +272,10 @@ func runHook(args []string) error {
 	payloadRaw, err := resolveHookPayload(args)
 	if err != nil {
 		return err
+	}
+
+	if isApprovalInteractionLockActive() {
+		return nil
 	}
 
 	payload := map[string]any{}
@@ -948,12 +954,21 @@ func sendNativeApprovalNotification(payload map[string]any) error {
 	if len(choices) == 0 {
 		choices = defaultApprovalChoices(threadID)
 	}
+	lockPath, err := approvalInteractionLockPath()
+	if err != nil {
+		return err
+	}
+	timeoutSeconds := approvalActionTimeoutSeconds()
+	if err := writeApprovalInteractionLock(lockPath, timeoutSeconds); err != nil {
+		return err
+	}
 
 	args := []string{
 		"--title", title,
 		"--message", message,
 		"--identifier", notificationGroup("approval-native", threadID),
-		"--timeout-seconds", strconv.Itoa(approvalActionTimeoutSeconds()),
+		"--timeout-seconds", strconv.Itoa(timeoutSeconds),
+		"--interaction-lock-file", lockPath,
 	}
 	for _, choice := range choices {
 		args = append(args, "--choice-label", choice.Label)
@@ -964,6 +979,7 @@ func sendNativeApprovalNotification(payload map[string]any) error {
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
 	if err := cmd.Start(); err != nil {
+		clearApprovalInteractionLock(lockPath)
 		return fmt.Errorf("start native approval notifier: %w", err)
 	}
 	return nil
@@ -1056,15 +1072,58 @@ func approvalActionTimeoutSeconds() int {
 	return parsed
 }
 
-func ensureApprovalActionHelper() (string, error) {
-	cacheDir, err := os.UserCacheDir()
+func approvalInteractionLockPath() (string, error) {
+	stateDir, err := runtimeStateDir()
 	if err != nil {
-		return "", fmt.Errorf("resolve user cache dir: %w", err)
+		return "", err
+	}
+	return filepath.Join(stateDir, interactionLockName), nil
+}
+
+func writeApprovalInteractionLock(path string, timeoutSeconds int) error {
+	expiresAt := time.Now().Add(time.Duration(timeoutSeconds+interactionLockGraceSeconds) * time.Second).Unix()
+	content := fmt.Sprintf("%d\n", expiresAt)
+	if err := writeFileAtomic(path, []byte(content), 0o644); err != nil {
+		return fmt.Errorf("write approval lock: %w", err)
+	}
+	return nil
+}
+
+func clearApprovalInteractionLock(path string) {
+	if strings.TrimSpace(path) == "" {
+		return
+	}
+	_ = os.Remove(path)
+}
+
+func isApprovalInteractionLockActive() bool {
+	lockPath, err := approvalInteractionLockPath()
+	if err != nil {
+		return false
 	}
 
-	helperDir := filepath.Join(cacheDir, appName)
-	if err := os.MkdirAll(helperDir, 0o755); err != nil {
-		return "", fmt.Errorf("create helper dir: %w", err)
+	raw, err := os.ReadFile(lockPath)
+	if err != nil {
+		return false
+	}
+
+	expiresAt, err := strconv.ParseInt(strings.TrimSpace(string(raw)), 10, 64)
+	if err != nil {
+		clearApprovalInteractionLock(lockPath)
+		return false
+	}
+
+	if time.Now().Unix() > expiresAt {
+		clearApprovalInteractionLock(lockPath)
+		return false
+	}
+	return true
+}
+
+func ensureApprovalActionHelper() (string, error) {
+	helperDir, err := runtimeStateDir()
+	if err != nil {
+		return "", err
 	}
 
 	sourcePath := filepath.Join(helperDir, helperSourceFilename)
@@ -1091,7 +1150,21 @@ func ensureApprovalActionHelper() (string, error) {
 	tmpBinaryPath := binaryPath + ".tmp"
 	_ = os.Remove(tmpBinaryPath)
 
-	compileCmd := exec.Command(swiftcPath, "-O", "-suppress-warnings", sourcePath, "-o", tmpBinaryPath)
+	moduleCachePath := filepath.Join(helperDir, "swift-module-cache")
+	if err := os.MkdirAll(moduleCachePath, 0o755); err != nil {
+		return "", fmt.Errorf("create swift module cache dir: %w", err)
+	}
+
+	compileCmd := exec.Command(
+		swiftcPath,
+		"-O",
+		"-suppress-warnings",
+		"-module-cache-path",
+		moduleCachePath,
+		sourcePath,
+		"-o",
+		tmpBinaryPath,
+	)
 	if out, err := compileCmd.CombinedOutput(); err != nil {
 		_ = os.Remove(tmpBinaryPath)
 		return "", fmt.Errorf("compile helper failed: %w (%s)", err, strings.TrimSpace(string(out)))
@@ -1110,6 +1183,64 @@ func ensureApprovalActionHelper() (string, error) {
 	}
 
 	return binaryPath, nil
+}
+
+func runtimeStateDir() (string, error) {
+	candidates := []string{}
+	if cacheDir, err := os.UserCacheDir(); err == nil {
+		cacheDir = strings.TrimSpace(cacheDir)
+		if cacheDir != "" {
+			candidates = append(candidates, filepath.Join(cacheDir, appName))
+		}
+	}
+
+	tempDir := strings.TrimSpace(os.TempDir())
+	if tempDir != "" {
+		candidates = append(candidates, filepath.Join(tempDir, appName))
+	}
+
+	seen := map[string]struct{}{}
+	failures := []string{}
+	for _, dir := range candidates {
+		if dir == "" {
+			continue
+		}
+		if _, ok := seen[dir]; ok {
+			continue
+		}
+		seen[dir] = struct{}{}
+
+		if err := ensureWritableDir(dir); err == nil {
+			return dir, nil
+		} else {
+			failures = append(failures, fmt.Sprintf("%s: %v", dir, err))
+		}
+	}
+
+	if len(failures) == 0 {
+		return "", errors.New("resolve runtime state dir: no candidate directories")
+	}
+	return "", fmt.Errorf("resolve runtime state dir failed (%s)", strings.Join(failures, "; "))
+}
+
+func ensureWritableDir(dir string) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+
+	probe, err := os.CreateTemp(dir, ".write-test-*")
+	if err != nil {
+		return err
+	}
+	probePath := probe.Name()
+	if err := probe.Close(); err != nil {
+		_ = os.Remove(probePath)
+		return err
+	}
+	if err := os.Remove(probePath); err != nil {
+		return err
+	}
+	return nil
 }
 
 func helperSourceHash(source string) string {

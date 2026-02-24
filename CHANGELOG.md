@@ -7,6 +7,15 @@ All notable changes to this project are documented in this file.
 ### Added
 - Added new README demo asset for unified popup UI (`docs/assets/demo-popup-v031.svg`).
 - Added release workflow automation to update `MiUPa/homebrew-codex-notify` Formula after each version tag release.
+- Added Homebrew Formula `post_install` auto-setup (`codex-notify init`) so `brew install` can complete setup without manual init in standard cases.
+
+### Changed
+- Popup window now uses a fixed size regardless of message length.
+- Popup now provides a `Read more` button to display the full message text on demand.
+
+### Fixed
+- Suppressed new notifications while the approval interaction popup is active to avoid interrupting user choices.
+- Fixed popup helper fallback-to-system issues in restricted environments by using writable runtime directories and a writable Swift module cache path.
 
 ## [0.3.2] - 2026-02-24
 

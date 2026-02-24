@@ -7,6 +7,12 @@ All notable changes to this project are documented in this file.
 ### Added
 - Added new README demo asset for unified popup UI (`docs/assets/demo-popup-v031.svg`).
 
+## [0.3.2] - 2026-02-24
+
+### Fixed
+- Fixed config file parsing error with Codex CLI 0.104.0 by ensuring `notify` hook is placed at TOML root level (not inside sections).
+- `codex-notify init` now correctly inserts `notify` directive before any TOML sections.
+
 ## [0.3.1] - 2026-02-23
 
 ### Changed

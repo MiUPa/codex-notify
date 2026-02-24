@@ -318,7 +318,7 @@ final class PopupController: NSObject {
     private var openedAt = Date()
     private var isClosing = false
     private let fixedWidth: CGFloat = 392
-    private let fixedHeight: CGFloat = 186
+    private let fixedHeight: CGFloat = 168
     private let horizontalPadding: CGFloat = 14
     private let messageAreaHeight: CGFloat = 40
     private let messageMaxLines: Int = 2

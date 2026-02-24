@@ -27,6 +27,7 @@ brew install codex-notify
 
 The formula installs prebuilt release binaries for macOS (arm64/amd64), so local Go/CLT build steps are not required.
 `brew install codex-notify` also runs `codex-notify init` via Formula `post_install` to configure the hook automatically.
+When `main` is updated, this repository's Formula is automatically synced to `MiUPa/homebrew-codex-notify`.
 
 `Formula/codex-notify.rb` in this repository is the source template for your tap repository (`MiUPa/homebrew-codex-notify`).
 

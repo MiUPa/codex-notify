@@ -20,6 +20,7 @@ This triggers `.github/workflows/release.yml` and creates a GitHub Release with:
 ## 3. Update Homebrew tap
 
 `release.yml` automatically updates `MiUPa/homebrew-codex-notify` after the GitHub Release is published.
+Additionally, `sync-homebrew-tap.yml` keeps the tap Formula in sync whenever `main` is updated.
 Prerequisite: repository secret `HOMEBREW_TAP_GITHUB_TOKEN` must be configured with push access to the tap repository.
 
 Manual fallback (if automation fails):

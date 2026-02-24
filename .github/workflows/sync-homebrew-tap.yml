@@ -1,0 +1,58 @@
+name: sync-homebrew-tap
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-homebrew-tap
+  cancel-in-progress: true
+
+jobs:
+  sync-formula:
+    if: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source repository
+        uses: actions/checkout@v4
+
+      - name: Checkout tap repository
+        uses: actions/checkout@v4
+        with:
+          repository: MiUPa/homebrew-codex-notify
+          token: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          path: homebrew-codex-notify
+
+      - name: Sync Formula file
+        run: |
+          set -euo pipefail
+          cp Formula/codex-notify.rb homebrew-codex-notify/Formula/codex-notify.rb
+
+      - name: Commit and push Formula update
+        working-directory: homebrew-codex-notify
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- Formula/codex-notify.rb; then
+            echo "No Formula changes detected; skipping."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/codex-notify.rb
+          git commit -m "Sync Formula from codex-notify@${SOURCE_SHA::7}"
+          git push origin HEAD:main
+
+  missing-token:
+    if: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN == '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report missing token
+        run: echo "::warning::HOMEBREW_TAP_GITHUB_TOKEN is not set; skipping tap sync."

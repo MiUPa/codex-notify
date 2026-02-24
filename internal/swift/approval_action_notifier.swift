@@ -237,10 +237,10 @@ final class StyledActionButton: NSButton {
         self.isBordered = false
         self.bezelStyle = .regularSquare
         self.setButtonType(.momentaryPushIn)
-        self.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        self.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
         self.focusRingType = .none
         self.wantsLayer = true
-        self.layer?.cornerRadius = 10
+        self.layer?.cornerRadius = 8
         self.layer?.borderWidth = 1
         self.layer?.masksToBounds = true
 
@@ -255,7 +255,7 @@ final class StyledActionButton: NSButton {
         self.attributedTitle = NSAttributedString(
             string: title,
             attributes: [
-                .font: NSFont.systemFont(ofSize: 13, weight: .semibold),
+                .font: NSFont.systemFont(ofSize: 12, weight: .semibold),
                 .foregroundColor: palette.text
             ]
         )
@@ -317,10 +317,11 @@ final class PopupController: NSObject {
     private var progressTrackWidth: CGFloat = 0
     private var openedAt = Date()
     private var isClosing = false
-    private let fixedWidth: CGFloat = 520
-    private let fixedHeight: CGFloat = 320
-    private let horizontalPadding: CGFloat = 18
-    private let messageAreaHeight: CGFloat = 78
+    private let fixedWidth: CGFloat = 392
+    private let fixedHeight: CGFloat = 186
+    private let horizontalPadding: CGFloat = 14
+    private let messageAreaHeight: CGFloat = 40
+    private let messageMaxLines: Int = 2
 
     init(config: Config) {
         self.config = config
@@ -384,26 +385,26 @@ final class PopupController: NSObject {
         accentBar.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.85).cgColor
         root.addSubview(accentBar)
 
-        let headerHeight: CGFloat = 34
-        let headerY = panelHeight - 16 - headerHeight
+        let headerHeight: CGFloat = 30
+        let headerY = panelHeight - 14 - headerHeight
 
-        let iconBack = NSView(frame: NSRect(x: horizontalPadding, y: headerY + 5, width: 22, height: 22))
+        let iconBack = NSView(frame: NSRect(x: horizontalPadding, y: headerY + 7, width: 18, height: 18))
         iconBack.wantsLayer = true
-        iconBack.layer?.cornerRadius = 11
+        iconBack.layer?.cornerRadius = 9
         iconBack.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.2).cgColor
         root.addSubview(iconBack)
 
-        let iconView = NSImageView(frame: NSRect(x: horizontalPadding + 3, y: headerY + 8, width: 16, height: 16))
+        let iconView = NSImageView(frame: NSRect(x: horizontalPadding + 2, y: headerY + 9, width: 14, height: 14))
         if #available(macOS 11.0, *) {
             iconView.image = NSImage(systemSymbolName: "bolt.fill", accessibilityDescription: nil)
-            iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
+            iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 10, weight: .medium)
         }
         iconView.contentTintColor = NSColor.controlAccentColor
         root.addSubview(iconView)
 
         let titleLabel = NSTextField(labelWithString: config.title)
-        titleLabel.frame = NSRect(x: horizontalPadding + 30, y: headerY + 12, width: width - 118, height: 18)
-        titleLabel.font = NSFont.systemFont(ofSize: 14, weight: .semibold)
+        titleLabel.frame = NSRect(x: horizontalPadding + 24, y: headerY + 11, width: width - 82, height: 16)
+        titleLabel.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
         titleLabel.textColor = .labelColor
         root.addSubview(titleLabel)
 
@@ -412,31 +413,35 @@ final class PopupController: NSObject {
             meta += "  •  \(shortenedIdentifier(config.identifier))"
         }
         let metaLabel = NSTextField(labelWithString: meta)
-        metaLabel.frame = NSRect(x: horizontalPadding + 30, y: headerY - 1, width: width - 118, height: 14)
-        metaLabel.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+        metaLabel.frame = NSRect(x: horizontalPadding + 24, y: headerY - 1, width: width - 82, height: 12)
+        metaLabel.font = NSFont.systemFont(ofSize: 10, weight: .medium)
         metaLabel.textColor = .tertiaryLabelColor
         root.addSubview(metaLabel)
 
         let closeButton = NSButton(title: "×", target: self, action: #selector(closePopup))
         closeButton.isBordered = false
-        closeButton.frame = NSRect(x: width - 34, y: headerY + 8, width: 18, height: 18)
-        closeButton.font = NSFont.systemFont(ofSize: 14, weight: .semibold)
+        closeButton.frame = NSRect(x: width - 28, y: headerY + 9, width: 14, height: 14)
+        closeButton.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
         closeButton.contentTintColor = .tertiaryLabelColor
         root.addSubview(closeButton)
 
         let messageWidth = width - (horizontalPadding * 2)
-        let messageFullHeight = textHeight(config.message, width: messageWidth)
-        let messageY = headerY - 10 - messageAreaHeight
+        let messageY = headerY - 8 - messageAreaHeight
         let messageLabel = NSTextField(wrappingLabelWithString: config.message)
         messageLabel.frame = NSRect(x: horizontalPadding, y: messageY, width: messageWidth, height: messageAreaHeight)
-        messageLabel.font = NSFont.systemFont(ofSize: 13, weight: .regular)
+        messageLabel.font = NSFont.systemFont(ofSize: 12, weight: .regular)
         messageLabel.textColor = .secondaryLabelColor
-        messageLabel.maximumNumberOfLines = 4
+        messageLabel.maximumNumberOfLines = messageMaxLines
         messageLabel.alignment = .left
+        if let messageCell = messageLabel.cell as? NSTextFieldCell {
+            messageCell.wraps = true
+            messageCell.lineBreakMode = .byTruncatingTail
+            messageCell.usesSingleLineMode = false
+        }
         root.addSubview(messageLabel)
 
-        let progressHeight: CGFloat = 4
-        let progressY = messageY - 12 - progressHeight
+        let progressHeight: CGFloat = 3
+        let progressY = messageY - 9 - progressHeight
         let progressTrack = NSView(frame: NSRect(x: horizontalPadding, y: progressY, width: width - (horizontalPadding * 2), height: progressHeight))
         progressTrack.wantsLayer = true
         progressTrack.layer?.cornerRadius = progressHeight / 2
@@ -453,27 +458,25 @@ final class PopupController: NSObject {
         self.progressFill = progressFill
         self.progressTrackWidth = progressTrack.bounds.width
 
-        if messageFullHeight > messageAreaHeight + 0.5 {
-            let readMoreButton = NSButton(title: "Read more", target: self, action: #selector(showReadMore))
-            readMoreButton.isBordered = false
-            readMoreButton.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
-            readMoreButton.contentTintColor = NSColor.controlAccentColor
-            readMoreButton.frame = NSRect(x: width - horizontalPadding - 76, y: progressY + progressHeight + 1, width: 76, height: 16)
-            readMoreButton.alignment = .right
-            root.addSubview(readMoreButton)
-        }
+        let readMoreButton = NSButton(title: "Read more", target: self, action: #selector(showReadMore))
+        readMoreButton.isBordered = false
+        readMoreButton.font = NSFont.systemFont(ofSize: 10, weight: .semibold)
+        readMoreButton.contentTintColor = NSColor.controlAccentColor
+        readMoreButton.frame = NSRect(x: width - horizontalPadding - 66, y: progressY + progressHeight + 1, width: 66, height: 14)
+        readMoreButton.alignment = .right
+        root.addSubview(readMoreButton)
 
-        let availableButtonsTop = progressY - 12
-        let availableButtonsBottom: CGFloat = 16
+        let availableButtonsTop = progressY - 8
+        let availableButtonsBottom: CGFloat = 12
         let availableButtonsHeight = max(36, availableButtonsTop - availableButtonsBottom)
-        let desiredRowHeight: CGFloat = 36
+        let desiredRowHeight: CGFloat = 28
         var rowHeight: CGFloat = desiredRowHeight
-        var rowSpacing: CGFloat = 8
+        var rowSpacing: CGFloat = 6
         if rows.count > 1 {
             let maxRowHeight = (availableButtonsHeight - (CGFloat(rows.count - 1) * rowSpacing)) / CGFloat(rows.count)
-            rowHeight = max(26, min(desiredRowHeight, floor(maxRowHeight)))
+            rowHeight = max(18, min(desiredRowHeight, floor(maxRowHeight)))
             if rowHeight < desiredRowHeight {
-                rowSpacing = 6
+                rowSpacing = 4
             }
         }
         let buttonsHeight = CGFloat(rows.count) * rowHeight + CGFloat(max(0, rows.count - 1)) * rowSpacing

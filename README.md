@@ -107,7 +107,7 @@ codex-notify uninstall --restore-config
 - All events use popup UI by default (bottom-right corner), including `test`, `agent-turn-complete`, `approval-requested`, and unknown events.
 - `approval-requested` supports selectable actions (`Open`, `Approve`, `Reject`) and dynamic payload choices.
 - While the approval popup is open, incoming notifications are suppressed to avoid interruption during user action.
-- Popup window size is fixed; when message text is too long, a `Read more` button opens the full text.
+- Popup window size is fixed, and a `Read more` button opens the full text.
 - If popup helper is unavailable, it falls back to system notification.
 
 ## Approval Actions

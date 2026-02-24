@@ -11,10 +11,11 @@ All notable changes to this project are documented in this file.
 
 ### Changed
 - Popup window now uses a fixed size regardless of message length.
-- Long popup messages now show a `Read more` button to display the full text on demand.
+- Popup now provides a `Read more` button to display the full message text on demand.
 
 ### Fixed
 - Suppressed new notifications while the approval interaction popup is active to avoid interrupting user choices.
+- Fixed popup helper fallback-to-system issues in restricted environments by using writable runtime directories and a writable Swift module cache path.
 
 ## [0.3.2] - 2026-02-24
 

@@ -38,6 +38,8 @@ const (
 	helperSourceFilename                = "approval_action_notifier.swift"
 	helperBinaryName                    = "approval_action_notifier"
 	helperHashName                      = "approval_action_notifier.sha256"
+	interactionLockName                 = "approval_interaction.lock"
+	interactionLockGraceSeconds         = 5
 )
 
 var (
@@ -270,6 +272,10 @@ func runHook(args []string) error {
 	payloadRaw, err := resolveHookPayload(args)
 	if err != nil {
 		return err
+	}
+
+	if isApprovalInteractionLockActive() {
+		return nil
 	}
 
 	payload := map[string]any{}
@@ -948,12 +954,21 @@ func sendNativeApprovalNotification(payload map[string]any) error {
 	if len(choices) == 0 {
 		choices = defaultApprovalChoices(threadID)
 	}
+	lockPath, err := approvalInteractionLockPath()
+	if err != nil {
+		return err
+	}
+	timeoutSeconds := approvalActionTimeoutSeconds()
+	if err := writeApprovalInteractionLock(lockPath, timeoutSeconds); err != nil {
+		return err
+	}
 
 	args := []string{
 		"--title", title,
 		"--message", message,
 		"--identifier", notificationGroup("approval-native", threadID),
-		"--timeout-seconds", strconv.Itoa(approvalActionTimeoutSeconds()),
+		"--timeout-seconds", strconv.Itoa(timeoutSeconds),
+		"--interaction-lock-file", lockPath,
 	}
 	for _, choice := range choices {
 		args = append(args, "--choice-label", choice.Label)
@@ -964,6 +979,7 @@ func sendNativeApprovalNotification(payload map[string]any) error {
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
 	if err := cmd.Start(); err != nil {
+		clearApprovalInteractionLock(lockPath)
 		return fmt.Errorf("start native approval notifier: %w", err)
 	}
 	return nil
@@ -1054,6 +1070,59 @@ func approvalActionTimeoutSeconds() int {
 		return 300
 	}
 	return parsed
+}
+
+func approvalInteractionLockPath() (string, error) {
+	cacheDir, err := os.UserCacheDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve user cache dir: %w", err)
+	}
+
+	lockDir := filepath.Join(cacheDir, appName)
+	if err := os.MkdirAll(lockDir, 0o755); err != nil {
+		return "", fmt.Errorf("create helper dir: %w", err)
+	}
+	return filepath.Join(lockDir, interactionLockName), nil
+}
+
+func writeApprovalInteractionLock(path string, timeoutSeconds int) error {
+	expiresAt := time.Now().Add(time.Duration(timeoutSeconds+interactionLockGraceSeconds) * time.Second).Unix()
+	content := fmt.Sprintf("%d\n", expiresAt)
+	if err := writeFileAtomic(path, []byte(content), 0o644); err != nil {
+		return fmt.Errorf("write approval lock: %w", err)
+	}
+	return nil
+}
+
+func clearApprovalInteractionLock(path string) {
+	if strings.TrimSpace(path) == "" {
+		return
+	}
+	_ = os.Remove(path)
+}
+
+func isApprovalInteractionLockActive() bool {
+	lockPath, err := approvalInteractionLockPath()
+	if err != nil {
+		return false
+	}
+
+	raw, err := os.ReadFile(lockPath)
+	if err != nil {
+		return false
+	}
+
+	expiresAt, err := strconv.ParseInt(strings.TrimSpace(string(raw)), 10, 64)
+	if err != nil {
+		clearApprovalInteractionLock(lockPath)
+		return false
+	}
+
+	if time.Now().Unix() > expiresAt {
+		clearApprovalInteractionLock(lockPath)
+		return false
+	}
+	return true
 }
 
 func ensureApprovalActionHelper() (string, error) {

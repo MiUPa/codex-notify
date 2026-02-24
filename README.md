@@ -26,6 +26,7 @@ brew install codex-notify
 ```
 
 The formula installs prebuilt release binaries for macOS (arm64/amd64), so local Go/CLT build steps are not required.
+`brew install codex-notify` also runs `codex-notify init` via Formula `post_install` to configure the hook automatically.
 
 `Formula/codex-notify.rb` in this repository is the source template for your tap repository (`MiUPa/homebrew-codex-notify`).
 
@@ -49,22 +50,22 @@ brew install codex-notify
 
 ## Quick Start
 
-1) Initialize Codex config:
-
-```bash
-codex-notify init
-```
-
-2) Validate setup:
+1) Validate setup:
 
 ```bash
 codex-notify doctor
 ```
 
-3) Send a test notification:
+2) Send a test notification:
 
 ```bash
 codex-notify test "Codex通知テスト"
+```
+
+3) If doctor reports an existing non-codex `notify`, apply manually:
+
+```bash
+codex-notify init --replace
 ```
 
 ## Commands
@@ -85,6 +86,7 @@ codex-notify uninstall [--restore-config] [--config path]
 - Adds `notify = ["codex-notify", "hook"]`
 - Refuses to overwrite existing `notify` unless `--replace` is specified
 - Keeps repeated runs idempotent
+- Homebrew install runs `init` automatically via Formula `post_install`
 
 ## Example Codex Config
 
@@ -104,6 +106,8 @@ codex-notify uninstall --restore-config
 
 - All events use popup UI by default (bottom-right corner), including `test`, `agent-turn-complete`, `approval-requested`, and unknown events.
 - `approval-requested` supports selectable actions (`Open`, `Approve`, `Reject`) and dynamic payload choices.
+- While the approval popup is open, incoming notifications are suppressed to avoid interruption during user action.
+- Popup window size is fixed; when message text is too long, a `Read more` button opens the full text.
 - If popup helper is unavailable, it falls back to system notification.
 
 ## Approval Actions

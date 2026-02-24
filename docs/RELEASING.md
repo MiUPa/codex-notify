@@ -19,7 +19,10 @@ This triggers `.github/workflows/release.yml` and creates a GitHub Release with:
 
 ## 3. Update Homebrew tap
 
-Generate the Formula content:
+`release.yml` automatically updates `MiUPa/homebrew-codex-notify` after the GitHub Release is published.
+Prerequisite: repository secret `HOMEBREW_TAP_GITHUB_TOKEN` must be configured with push access to the tap repository.
+
+Manual fallback (if automation fails):
 
 ```bash
 ./scripts/gen_formula.sh vX.Y.Z
@@ -35,3 +38,5 @@ brew tap MiUPa/homebrew-codex-notify
 brew install codex-notify
 codex-notify doctor
 ```
+
+`brew install codex-notify` runs `codex-notify init` automatically via Formula `post_install` for standard setup.

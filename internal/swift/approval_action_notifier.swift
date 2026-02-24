@@ -11,6 +11,7 @@ struct Config {
     let message: String
     let identifier: String
     let timeoutSeconds: Int
+    let interactionLockFile: String
     let choices: [Choice]
 }
 
@@ -39,6 +40,7 @@ private func parseArgs(_ args: [String]) -> Config {
     let title = value("--title") ?? "Codex: Approval Requested"
     let message = value("--message") ?? "承認待ちです。"
     let identifier = value("--identifier") ?? ""
+    let interactionLockFile = value("--interaction-lock-file") ?? ""
 
     let timeoutRaw = value("--timeout-seconds") ?? "45"
     let timeoutParsed = Int(timeoutRaw) ?? 45
@@ -73,8 +75,17 @@ private func parseArgs(_ args: [String]) -> Config {
         message: message,
         identifier: identifier,
         timeoutSeconds: timeoutSeconds,
+        interactionLockFile: interactionLockFile,
         choices: choices
     )
+}
+
+private func clearInteractionLock(_ path: String) {
+    let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else {
+        return
+    }
+    _ = try? FileManager.default.removeItem(atPath: trimmed)
 }
 
 private func runShell(_ command: String) {
@@ -306,25 +317,28 @@ final class PopupController: NSObject {
     private var progressTrackWidth: CGFloat = 0
     private var openedAt = Date()
     private var isClosing = false
+    private let fixedWidth: CGFloat = 520
+    private let fixedHeight: CGFloat = 320
+    private let horizontalPadding: CGFloat = 18
+    private let messageAreaHeight: CGFloat = 78
 
     init(config: Config) {
         self.config = config
     }
 
+    deinit {
+        releaseInteractionLock()
+    }
+
+    func releaseInteractionLock() {
+        clearInteractionLock(config.interactionLockFile)
+    }
+
     func show() {
         let columns = columnsPerRow(choiceCount: config.choices.count)
-        let widthByMessage = max(390, min(720, CGFloat(config.message.count) * 3.0 + 280))
-        let interButtonSpacing = max(columns - 1, 0)
-        let widthByColumnsValue = columns * 128 + interButtonSpacing * 8 + 36
-        let widthByColumns = CGFloat(widthByColumnsValue)
-        let width = max(widthByMessage, widthByColumns)
-
-        let messageHeight = min(130, textHeight(config.message, width: width - 48))
+        let width = fixedWidth
+        let panelHeight = fixedHeight
         let rows = chunkChoices(config.choices, columns: columns)
-        let rowHeight: CGFloat = 36
-        let rowSpacing: CGFloat = 8
-        let buttonsHeight = CGFloat(rows.count) * rowHeight + CGFloat(max(0, rows.count - 1)) * rowSpacing
-        let panelHeight: CGFloat = 104 + messageHeight + buttonsHeight
 
         let visible = NSScreen.main?.visibleFrame ?? NSScreen.screens.first?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1200, height: 800)
         let x = visible.maxX - width - 18
@@ -371,7 +385,6 @@ final class PopupController: NSObject {
         root.addSubview(accentBar)
 
         let headerHeight: CGFloat = 34
-        let horizontalPadding: CGFloat = 18
         let headerY = panelHeight - 16 - headerHeight
 
         let iconBack = NSView(frame: NSRect(x: horizontalPadding, y: headerY + 5, width: 22, height: 22))
@@ -411,12 +424,14 @@ final class PopupController: NSObject {
         closeButton.contentTintColor = .tertiaryLabelColor
         root.addSubview(closeButton)
 
-        let messageY = headerY - 10 - messageHeight
+        let messageWidth = width - (horizontalPadding * 2)
+        let messageFullHeight = textHeight(config.message, width: messageWidth)
+        let messageY = headerY - 10 - messageAreaHeight
         let messageLabel = NSTextField(wrappingLabelWithString: config.message)
-        messageLabel.frame = NSRect(x: horizontalPadding, y: messageY, width: width - (horizontalPadding * 2), height: messageHeight)
+        messageLabel.frame = NSRect(x: horizontalPadding, y: messageY, width: messageWidth, height: messageAreaHeight)
         messageLabel.font = NSFont.systemFont(ofSize: 13, weight: .regular)
         messageLabel.textColor = .secondaryLabelColor
-        messageLabel.maximumNumberOfLines = 5
+        messageLabel.maximumNumberOfLines = 4
         messageLabel.alignment = .left
         root.addSubview(messageLabel)
 
@@ -438,7 +453,31 @@ final class PopupController: NSObject {
         self.progressFill = progressFill
         self.progressTrackWidth = progressTrack.bounds.width
 
-        let buttonsY = progressY - 12 - buttonsHeight
+        if messageFullHeight > messageAreaHeight + 0.5 {
+            let readMoreButton = NSButton(title: "Read more", target: self, action: #selector(showReadMore))
+            readMoreButton.isBordered = false
+            readMoreButton.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+            readMoreButton.contentTintColor = NSColor.controlAccentColor
+            readMoreButton.frame = NSRect(x: width - horizontalPadding - 76, y: progressY + progressHeight + 1, width: 76, height: 16)
+            readMoreButton.alignment = .right
+            root.addSubview(readMoreButton)
+        }
+
+        let availableButtonsTop = progressY - 12
+        let availableButtonsBottom: CGFloat = 16
+        let availableButtonsHeight = max(36, availableButtonsTop - availableButtonsBottom)
+        let desiredRowHeight: CGFloat = 36
+        var rowHeight: CGFloat = desiredRowHeight
+        var rowSpacing: CGFloat = 8
+        if rows.count > 1 {
+            let maxRowHeight = (availableButtonsHeight - (CGFloat(rows.count - 1) * rowSpacing)) / CGFloat(rows.count)
+            rowHeight = max(26, min(desiredRowHeight, floor(maxRowHeight)))
+            if rowHeight < desiredRowHeight {
+                rowSpacing = 6
+            }
+        }
+        let buttonsHeight = CGFloat(rows.count) * rowHeight + CGFloat(max(0, rows.count - 1)) * rowSpacing
+        let buttonsY = availableButtonsBottom + max(0, (availableButtonsHeight - buttonsHeight) / 2)
         var nextRowTop = buttonsY + buttonsHeight - rowHeight
         var globalIndex = 0
         for row in rows {
@@ -504,6 +543,19 @@ final class PopupController: NSObject {
         return max(28, ceil(rect.height))
     }
 
+    @objc private func showReadMore() {
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = config.title
+        alert.informativeText = config.message
+        alert.addButton(withTitle: "Close")
+        if let panel {
+            alert.beginSheetModal(for: panel)
+        } else {
+            _ = alert.runModal()
+        }
+    }
+
     @objc private func updateProgress() {
         guard let fill = progressFill else {
             return
@@ -535,6 +587,7 @@ final class PopupController: NSObject {
         timeoutTimer = nil
         progressTimer?.invalidate()
         progressTimer = nil
+        releaseInteractionLock()
 
         guard let panel else {
             NSApp.terminate(nil)
@@ -565,6 +618,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         controller.show()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        controller.releaseInteractionLock()
     }
 }
 

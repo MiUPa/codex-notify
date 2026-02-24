@@ -155,15 +155,23 @@ make test
 ## Release
 
 ```bash
-# 1) tag and push
+# one-time setup:
+# - add repository secret HOMEBREW_TAP_GITHUB_TOKEN
+# - token scope: write access to MiUPa/homebrew-codex-notify
+#
+# release:
 git tag vX.Y.Z
 git push origin vX.Y.Z
-
-# 2) after GitHub Release is created, generate Formula snippet
-./scripts/gen_formula.sh vX.Y.Z
 ```
 
-Use the generated output to update `Formula/codex-notify.rb` in your tap repo.
+The release workflow builds artifacts, publishes GitHub Release assets, and then updates
+`Formula/codex-notify.rb` in `MiUPa/homebrew-codex-notify` automatically.
+
+Manual fallback:
+
+```bash
+./scripts/gen_formula.sh vX.Y.Z
+```
 
 ## Contributing
 

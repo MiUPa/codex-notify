@@ -6,6 +6,7 @@ All notable changes to this project are documented in this file.
 
 ### Added
 - Added new README demo asset for unified popup UI (`docs/assets/demo-popup-v031.svg`).
+- Added release workflow automation to update `MiUPa/homebrew-codex-notify` Formula after each version tag release.
 
 ## [0.3.2] - 2026-02-24
 

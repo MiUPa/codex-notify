@@ -44,3 +44,54 @@ jobs:
           files: |
             dist/*.tar.gz
             dist/checksums.txt
+
+  update-homebrew-tap:
+    needs: build-and-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source repository
+        uses: actions/checkout@v4
+
+      - name: Generate Formula from release checksums
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME}"
+
+          # Release assets can take a short time to become readable via URL.
+          for ATTEMPT in 1 2 3 4 5; do
+            if ./scripts/gen_formula.sh "${VERSION}" > /tmp/codex-notify.rb; then
+              exit 0
+            fi
+            if [[ "${ATTEMPT}" -eq 5 ]]; then
+              echo "failed to generate Formula for ${VERSION}" >&2
+              exit 1
+            fi
+            sleep 15
+          done
+
+      - name: Checkout tap repository
+        uses: actions/checkout@v4
+        with:
+          repository: MiUPa/homebrew-codex-notify
+          token: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          path: homebrew-codex-notify
+
+      - name: Update Formula file
+        run: |
+          set -euo pipefail
+          cp /tmp/codex-notify.rb homebrew-codex-notify/Formula/codex-notify.rb
+
+      - name: Commit and push Formula update
+        working-directory: homebrew-codex-notify
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- Formula/codex-notify.rb; then
+            echo "No Formula changes detected; skipping."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/codex-notify.rb
+          git commit -m "Bump codex-notify to ${GITHUB_REF_NAME}"
+          git push origin HEAD:main

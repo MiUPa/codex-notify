@@ -432,6 +432,10 @@ func configHasCodexNotify(content []byte) (bool, error) {
 func findNotifyLineIndex(content []byte) int {
 	lines := splitLines(content)
 	for i, line := range lines {
+		// Only match notify at root level (no indentation)
+		if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
+			continue
+		}
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
@@ -446,12 +450,33 @@ func findNotifyLineIndex(content []byte) int {
 func setNotifyLine(content []byte, idx int, notifyLine string) []byte {
 	lines := splitLines(content)
 	if idx >= 0 {
+		// Replace existing notify line at root level
 		lines[idx] = notifyLine
 	} else {
-		if len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) != "" {
-			lines = append(lines, "")
+		// Add notify line at root level (before any sections)
+		// Find first section or end of file
+		insertIdx := len(lines)
+		for i, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+				// Found first section, insert before it
+				if i > 0 && strings.TrimSpace(lines[i-1]) != "" {
+					// Add blank line before section
+					lines = append(lines[:i], append([]string{"", notifyLine}, lines[i:]...)...)
+				} else {
+					lines = append(lines[:i], append([]string{notifyLine}, lines[i:]...)...)
+				}
+				insertIdx = -1
+				break
+			}
 		}
-		lines = append(lines, notifyLine)
+		// If no section found, append at end
+		if insertIdx >= 0 {
+			if len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) != "" {
+				lines = append(lines, "")
+			}
+			lines = append(lines, notifyLine)
+		}
 	}
 	return []byte(strings.Join(lines, "\n") + "\n")
 }

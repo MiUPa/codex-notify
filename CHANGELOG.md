@@ -9,10 +9,13 @@ All notable changes to this project are documented in this file.
 - Added release workflow automation to update `MiUPa/homebrew-codex-notify` Formula after each version tag release.
 - Added a `main` branch sync workflow to automatically reflect Formula updates to `MiUPa/homebrew-codex-notify`.
 - Added Homebrew Formula `post_install` auto-setup (`codex-notify init`) so `brew install` can complete setup without manual init in standard cases.
+- Added explicit popup timeout configuration via `CODEX_NOTIFY_POPUP_TIMEOUT_SECONDS` while preserving `CODEX_NOTIFY_APPROVAL_TIMEOUT_SECONDS` as a compatibility fallback/override.
 
 ### Changed
 - Popup window now uses a fixed size regardless of message length.
 - Popup now provides a `Read more` button to display the full message text on demand.
+- Popup now closes automatically when the configured terminal app becomes active again.
+- Added GitHub Issues feedback links to CLI help and README.
 
 ### Fixed
 - Suppressed new notifications while the approval interaction popup is active to avoid interrupting user choices.

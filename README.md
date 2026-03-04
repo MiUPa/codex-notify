@@ -12,6 +12,11 @@
 Codex already supports notifications, but behavior can depend on terminal support.
 `codex-notify` gives you a direct macOS desktop notification path via Codex `notify` hook.
 
+## Feedback
+
+Issues:
+- https://github.com/MiUPa/codex-notify/issues
+
 ## Demo
 
 Latest popup UI (v0.3.1, all events unified to bottom-right popup):
@@ -108,6 +113,7 @@ codex-notify uninstall --restore-config
 - All events use popup UI by default (bottom-right corner), including `test`, `agent-turn-complete`, `approval-requested`, and unknown events.
 - `approval-requested` supports selectable actions (`Open`, `Approve`, `Reject`) and dynamic payload choices.
 - While the approval popup is open, incoming notifications are suppressed to avoid interruption during user action.
+- Popup closes automatically when the configured terminal app becomes active again.
 - Popup window size is fixed, and a `Read more` button opens the full text.
 - If popup helper is unavailable, it falls back to system notification.
 
@@ -142,7 +148,8 @@ export CODEX_NOTIFY_ENABLE_POPUP_APPROVAL_ACTIONS="1"
 export CODEX_NOTIFY_ENABLE_NATIVE_APPROVAL_ACTIONS="1" # legacy alias
 export CODEX_NOTIFY_NOTIFICATION_UI="popup" # or "system"
 export CODEX_NOTIFY_APPROVAL_UI="popup" # or "multi"
-export CODEX_NOTIFY_APPROVAL_TIMEOUT_SECONDS="45"
+export CODEX_NOTIFY_POPUP_TIMEOUT_SECONDS="45"
+export CODEX_NOTIFY_APPROVAL_TIMEOUT_SECONDS="45" # optional override for approval popups
 ```
 
 Important:

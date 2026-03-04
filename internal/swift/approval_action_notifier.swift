@@ -11,6 +11,7 @@ struct Config {
     let message: String
     let identifier: String
     let timeoutSeconds: Int
+    let dismissOnActivateBundleID: String
     let interactionLockFile: String
     let choices: [Choice]
 }
@@ -40,6 +41,8 @@ private func parseArgs(_ args: [String]) -> Config {
     let title = value("--title") ?? "Codex: Approval Requested"
     let message = value("--message") ?? "承認待ちです。"
     let identifier = value("--identifier") ?? ""
+    let dismissOnActivateBundleID = value("--dismiss-on-activate-bundle-id")?
+        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     let interactionLockFile = value("--interaction-lock-file") ?? ""
 
     let timeoutRaw = value("--timeout-seconds") ?? "45"
@@ -75,6 +78,7 @@ private func parseArgs(_ args: [String]) -> Config {
         message: message,
         identifier: identifier,
         timeoutSeconds: timeoutSeconds,
+        dismissOnActivateBundleID: dismissOnActivateBundleID,
         interactionLockFile: interactionLockFile,
         choices: choices
     )
@@ -313,6 +317,7 @@ final class PopupController: NSObject {
     private var panel: PopupPanel?
     private var timeoutTimer: Timer?
     private var progressTimer: Timer?
+    private var appActivationObserver: NSObjectProtocol?
     private var progressFill: NSView?
     private var progressTrackWidth: CGFloat = 0
     private var openedAt = Date()
@@ -328,6 +333,7 @@ final class PopupController: NSObject {
     }
 
     deinit {
+        stopDismissOnActivateObserver()
         releaseInteractionLock()
     }
 
@@ -508,6 +514,7 @@ final class PopupController: NSObject {
         self.panel = panel
         openedAt = Date()
         panel.alphaValue = 0
+        startDismissOnActivateObserver()
         panel.orderFrontRegardless()
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.17
@@ -530,6 +537,38 @@ final class PopupController: NSObject {
             userInfo: nil,
             repeats: true
         )
+    }
+
+    private func startDismissOnActivateObserver() {
+        let bundleID = config.dismissOnActivateBundleID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !bundleID.isEmpty, appActivationObserver == nil else {
+            return
+        }
+
+        appActivationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let self else {
+                return
+            }
+            guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else {
+                return
+            }
+            guard app.bundleIdentifier == bundleID else {
+                return
+            }
+            self.closePopup()
+        }
+    }
+
+    private func stopDismissOnActivateObserver() {
+        guard let appActivationObserver else {
+            return
+        }
+        NSWorkspace.shared.notificationCenter.removeObserver(appActivationObserver)
+        self.appActivationObserver = nil
     }
 
     private func textHeight(_ text: String, width: CGFloat) -> CGFloat {
@@ -590,6 +629,7 @@ final class PopupController: NSObject {
         timeoutTimer = nil
         progressTimer?.invalidate()
         progressTimer = nil
+        stopDismissOnActivateObserver()
         releaseInteractionLock()
 
         guard let panel else {

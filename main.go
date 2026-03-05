@@ -34,12 +34,14 @@ const (
 	notificationUIPopup  = "popup"
 	notificationUISystem = "system"
 
-	defaultApprovalPromptTimeoutSeconds = 45
-	helperSourceFilename                = "approval_action_notifier.swift"
-	helperBinaryName                    = "approval_action_notifier"
-	helperHashName                      = "approval_action_notifier.sha256"
-	interactionLockName                 = "approval_interaction.lock"
-	interactionLockGraceSeconds         = 5
+	defaultPopupTimeoutSeconds  = 45
+	minPopupTimeoutSeconds      = 5
+	maxPopupTimeoutSeconds      = 300
+	helperSourceFilename        = "approval_action_notifier.swift"
+	helperBinaryName            = "approval_action_notifier"
+	helperHashName              = "approval_action_notifier.sha256"
+	interactionLockName         = "approval_interaction.lock"
+	interactionLockGraceSeconds = 5
 )
 
 var (
@@ -111,6 +113,9 @@ Commands:
   hook       Receive Codex notify payload and raise macOS notification.
   action     Execute click action (open terminal / choose / submit text / send approve or reject keys).
   uninstall  Restore config from latest backup created by init.
+
+Feedback:
+  https://github.com/MiUPa/codex-notify/issues
 `, appName, appName, appName, appName, appName, appName, appName)
 }
 
@@ -968,6 +973,7 @@ func sendNativeApprovalNotification(payload map[string]any) error {
 		"--message", message,
 		"--identifier", notificationGroup("approval-native", threadID),
 		"--timeout-seconds", strconv.Itoa(timeoutSeconds),
+		"--dismiss-on-activate-bundle-id", terminalBundleID(),
 		"--interaction-lock-file", lockPath,
 	}
 	for _, choice := range choices {
@@ -996,7 +1002,8 @@ func sendNativePopupNotification(req notificationRequest, title, message, group 
 		"--title", title,
 		"--message", message,
 		"--identifier", group,
-		"--timeout-seconds", strconv.Itoa(approvalActionTimeoutSeconds()),
+		"--timeout-seconds", strconv.Itoa(popupTimeoutSeconds()),
+		"--dismiss-on-activate-bundle-id", terminalBundleID(),
 	}
 	for _, choice := range choices {
 		args = append(args, "--choice-label", choice.Label)
@@ -1054,22 +1061,40 @@ func inferPopupLabelFromCommand(command string) string {
 }
 
 func approvalActionTimeoutSeconds() int {
-	raw := strings.TrimSpace(os.Getenv("CODEX_NOTIFY_APPROVAL_TIMEOUT_SECONDS"))
-	if raw == "" {
-		return defaultApprovalPromptTimeoutSeconds
+	return popupTimeoutSecondsForEnv(
+		"CODEX_NOTIFY_APPROVAL_TIMEOUT_SECONDS",
+		"CODEX_NOTIFY_POPUP_TIMEOUT_SECONDS",
+	)
+}
+
+func popupTimeoutSeconds() int {
+	return popupTimeoutSecondsForEnv(
+		"CODEX_NOTIFY_POPUP_TIMEOUT_SECONDS",
+		"CODEX_NOTIFY_APPROVAL_TIMEOUT_SECONDS",
+	)
+}
+
+func popupTimeoutSecondsForEnv(keys ...string) int {
+	for _, key := range keys {
+		raw := strings.TrimSpace(os.Getenv(key))
+		if raw == "" {
+			continue
+		}
+
+		parsed, err := strconv.Atoi(raw)
+		if err != nil {
+			continue
+		}
+		if parsed < minPopupTimeoutSeconds {
+			return minPopupTimeoutSeconds
+		}
+		if parsed > maxPopupTimeoutSeconds {
+			return maxPopupTimeoutSeconds
+		}
+		return parsed
 	}
 
-	parsed, err := strconv.Atoi(raw)
-	if err != nil {
-		return defaultApprovalPromptTimeoutSeconds
-	}
-	if parsed < 5 {
-		return 5
-	}
-	if parsed > 300 {
-		return 300
-	}
-	return parsed
+	return defaultPopupTimeoutSeconds
 }
 
 func approvalInteractionLockPath() (string, error) {

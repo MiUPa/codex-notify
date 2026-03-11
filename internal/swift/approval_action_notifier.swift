@@ -445,6 +445,7 @@ final class PopupController: NSObject {
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
         panel.hidesOnDeactivate = false
+        panel.becomesKeyOnlyIfNeeded = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
 
         let root = NSVisualEffectView(frame: NSRect(origin: .zero, size: finalFrame.size))
@@ -813,13 +814,30 @@ final class PopupController: NSObject {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let controller: PopupController
+    private let previousFrontmostApp: NSRunningApplication?
 
-    init(controller: PopupController) {
+    init(controller: PopupController, previousFrontmostApp: NSRunningApplication?) {
         self.controller = controller
+        self.previousFrontmostApp = previousFrontmostApp
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         controller.show()
+        DispatchQueue.main.async { [previousFrontmostApp] in
+            guard let previousFrontmostApp else {
+                return
+            }
+            guard previousFrontmostApp.processIdentifier != ProcessInfo.processInfo.processIdentifier else {
+                return
+            }
+            let activationOptions: NSApplication.ActivationOptions
+            if #available(macOS 14.0, *) {
+                activationOptions = []
+            } else {
+                activationOptions = [.activateIgnoringOtherApps]
+            }
+            _ = previousFrontmostApp.activate(options: activationOptions)
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -828,9 +846,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 let config = parseArgs(CommandLine.arguments)
+let previousFrontmostApp = NSWorkspace.shared.frontmostApplication
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
 let controller = PopupController(config: config)
-let delegate = AppDelegate(controller: controller)
+let delegate = AppDelegate(controller: controller, previousFrontmostApp: previousFrontmostApp)
 app.delegate = delegate
 app.run()

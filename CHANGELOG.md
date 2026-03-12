@@ -24,6 +24,7 @@ All notable changes to this project are documented in this file.
 - Fixed popup helper fallback-to-system issues in restricted environments by using writable runtime directories and a writable Swift module cache path.
 - Fixed popup panel sizing so the window frame stays locked to the standard dimensions during display and animation.
 - Fixed popup activation so showing the popup no longer steals keyboard focus from the current app.
+- Fixed release automation so Formula generation no longer executes embedded backticks and Homebrew tap sync is skipped cleanly when the tap token is not configured.
 
 ## [0.3.2] - 2026-02-24
 

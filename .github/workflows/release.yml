@@ -46,6 +46,7 @@ jobs:
             dist/checksums.txt
 
   update-homebrew-tap:
+    if: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN != '' }}
     needs: build-and-release
     runs-on: ubuntu-latest
     steps:
@@ -95,3 +96,11 @@ jobs:
           git add Formula/codex-notify.rb
           git commit -m "Bump codex-notify to ${GITHUB_REF_NAME}"
           git push origin HEAD:main
+
+  missing-homebrew-token:
+    if: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN == '' }}
+    needs: build-and-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report missing token
+        run: echo "::warning::HOMEBREW_TAP_GITHUB_TOKEN is not set; skipping Homebrew tap update."

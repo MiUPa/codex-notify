@@ -49,7 +49,7 @@ class CodexNotify < Formula
   def post_install
     system_command(bin/"codex-notify", args: ["init"])
   rescue ErrorDuringExecution
-    opoo "Automatic Codex notify hook setup failed. Run `codex-notify init --replace` manually."
+    opoo "Automatic Codex notify hook setup failed. Run \`codex-notify init --replace\` manually."
   end
 
   test do

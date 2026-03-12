@@ -308,8 +308,40 @@ final class StyledActionButton: NSButton {
 }
 
 final class PopupPanel: NSPanel {
+    private let fixedSize: NSSize
+
+    init(contentRect: NSRect, fixedSize: NSSize, styleMask style: NSWindow.StyleMask, backing backingStoreType: NSWindow.BackingStoreType, defer flag: Bool) {
+        self.fixedSize = fixedSize
+        super.init(
+            contentRect: NSRect(origin: contentRect.origin, size: fixedSize),
+            styleMask: style,
+            backing: backingStoreType,
+            defer: flag
+        )
+        minSize = fixedSize
+        maxSize = fixedSize
+        contentMinSize = fixedSize
+        contentMaxSize = fixedSize
+    }
+
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+
+    override func setFrame(_ frameRect: NSRect, display flag: Bool) {
+        super.setFrame(clampedFrame(frameRect), display: flag)
+    }
+
+    override func setFrame(_ frameRect: NSRect, display flag: Bool, animate: Bool) {
+        super.setFrame(clampedFrame(frameRect), display: flag, animate: animate)
+    }
+
+    override func setContentSize(_ size: NSSize) {
+        super.setContentSize(fixedSize)
+    }
+
+    private func clampedFrame(_ frameRect: NSRect) -> NSRect {
+        NSRect(origin: frameRect.origin, size: fixedSize)
+    }
 }
 
 final class PopupController: NSObject {
@@ -343,8 +375,9 @@ final class PopupController: NSObject {
 
     func show() {
         let columns = columnsPerRow(choiceCount: config.choices.count)
-        let width = fixedWidth
-        let panelHeight = fixedHeight
+        let popupSize = NSSize(width: fixedWidth, height: fixedHeight)
+        let width = popupSize.width
+        let panelHeight = popupSize.height
         let rows = chunkChoices(config.choices, columns: columns)
 
         let visible = NSScreen.main?.visibleFrame ?? NSScreen.screens.first?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1200, height: 800)
@@ -355,6 +388,7 @@ final class PopupController: NSObject {
 
         let panel = PopupPanel(
             contentRect: startFrame,
+            fixedSize: popupSize,
             styleMask: [.nonactivatingPanel, .fullSizeContentView],
             backing: .buffered,
             defer: false

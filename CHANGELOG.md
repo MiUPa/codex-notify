@@ -23,6 +23,7 @@ All notable changes to this project are documented in this file.
 - Suppressed new notifications while the approval interaction popup is active to avoid interrupting user choices.
 - Fixed popup helper fallback-to-system issues in restricted environments by using writable runtime directories and a writable Swift module cache path.
 - Fixed popup panel sizing so the window frame stays locked to the standard dimensions during display and animation.
+- Fixed popup activation so showing the popup no longer steals keyboard focus from the current app.
 
 ## [0.3.2] - 2026-02-24
 

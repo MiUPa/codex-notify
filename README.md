@@ -116,6 +116,7 @@ codex-notify uninstall --restore-config
 - Popup closes automatically when the configured terminal app becomes active again.
 - Popup window size is fixed at a constant frame, and `Read more` jumps back to the configured Codex terminal/IDE.
 - Popup timeout can be changed from the popup `...` menu and is saved for future popups.
+- Popup display no longer steals keyboard focus from the app you are currently using.
 - If popup helper is unavailable, it falls back to system notification.
 
 ## Approval Actions

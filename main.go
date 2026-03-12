@@ -37,6 +37,7 @@ const (
 	defaultPopupTimeoutSeconds  = 45
 	minPopupTimeoutSeconds      = 5
 	maxPopupTimeoutSeconds      = 300
+	popupSettingsFilename       = "settings.json"
 	helperSourceFilename        = "approval_action_notifier.swift"
 	helperBinaryName            = "approval_action_notifier"
 	helperHashName              = "approval_action_notifier.sha256"
@@ -48,6 +49,7 @@ var (
 	rootNotifyLineRE  = regexp.MustCompile(`^notify\s*=`)
 	codexHookArrayRE  = regexp.MustCompile(`\[\s*"(?:[^"]*/)?codex-notify"\s*,\s*"hook"\s*\]`)
 	errDialogCanceled = errors.New("dialog canceled")
+	userConfigDir     = os.UserConfigDir
 )
 
 //go:embed internal/swift/approval_action_notifier.swift
@@ -60,6 +62,10 @@ type notificationRequest struct {
 	ExecuteOnClick    string
 	ActivateBundleID  string
 	PopupPrimaryLabel string
+}
+
+type popupSettings struct {
+	PopupTimeoutSeconds int `json:"popup_timeout_seconds,omitempty"`
 }
 
 func main() {
@@ -1085,16 +1091,68 @@ func popupTimeoutSecondsForEnv(keys ...string) int {
 		if err != nil {
 			continue
 		}
-		if parsed < minPopupTimeoutSeconds {
-			return minPopupTimeoutSeconds
-		}
-		if parsed > maxPopupTimeoutSeconds {
-			return maxPopupTimeoutSeconds
-		}
-		return parsed
+		return clampPopupTimeoutSeconds(parsed)
+	}
+
+	if fromSettings := popupTimeoutSecondsFromSettings(); fromSettings > 0 {
+		return fromSettings
 	}
 
 	return defaultPopupTimeoutSeconds
+}
+
+func popupTimeoutSecondsFromSettings() int {
+	settings, err := readPopupSettings()
+	if err != nil {
+		return 0
+	}
+	if settings.PopupTimeoutSeconds <= 0 {
+		return 0
+	}
+	return clampPopupTimeoutSeconds(settings.PopupTimeoutSeconds)
+}
+
+func clampPopupTimeoutSeconds(v int) int {
+	if v < minPopupTimeoutSeconds {
+		return minPopupTimeoutSeconds
+	}
+	if v > maxPopupTimeoutSeconds {
+		return maxPopupTimeoutSeconds
+	}
+	return v
+}
+
+func popupSettingsPath() (string, error) {
+	configDir, err := userConfigDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve user config dir: %w", err)
+	}
+	configDir = strings.TrimSpace(configDir)
+	if configDir == "" {
+		return "", errors.New("resolve user config dir: empty path")
+	}
+	return filepath.Join(configDir, appName, popupSettingsFilename), nil
+}
+
+func readPopupSettings() (popupSettings, error) {
+	settingsPath, err := popupSettingsPath()
+	if err != nil {
+		return popupSettings{}, err
+	}
+
+	content, err := readFileMaybe(settingsPath)
+	if err != nil {
+		return popupSettings{}, err
+	}
+	if len(content) == 0 {
+		return popupSettings{}, nil
+	}
+
+	var settings popupSettings
+	if err := json.Unmarshal(content, &settings); err != nil {
+		return popupSettings{}, fmt.Errorf("parse popup settings: %w", err)
+	}
+	return settings, nil
 }
 
 func approvalInteractionLockPath() (string, error) {

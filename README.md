@@ -114,7 +114,8 @@ codex-notify uninstall --restore-config
 - `approval-requested` supports selectable actions (`Open`, `Approve`, `Reject`) and dynamic payload choices.
 - While the approval popup is open, incoming notifications are suppressed to avoid interruption during user action.
 - Popup closes automatically when the configured terminal app becomes active again.
-- Popup window size is fixed at a constant frame, and a `Read more` button opens the full text.
+- Popup window size is fixed at a constant frame, and `Read more` jumps back to the configured Codex terminal/IDE.
+- Popup timeout can be changed from the popup `...` menu and is saved for future popups.
 - If popup helper is unavailable, it falls back to system notification.
 
 ## Approval Actions
@@ -151,6 +152,8 @@ export CODEX_NOTIFY_APPROVAL_UI="popup" # or "multi"
 export CODEX_NOTIFY_POPUP_TIMEOUT_SECONDS="45"
 export CODEX_NOTIFY_APPROVAL_TIMEOUT_SECONDS="45" # optional override for approval popups
 ```
+
+Saved popup timeout is used when the environment variables above are unset.
 
 Important:
 - Popup UI uses a Swift helper that is compiled on first use (`swiftc` required).

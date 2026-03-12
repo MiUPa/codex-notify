@@ -10,10 +10,12 @@ All notable changes to this project are documented in this file.
 - Added a `main` branch sync workflow to automatically reflect Formula updates to `MiUPa/homebrew-codex-notify`.
 - Added Homebrew Formula `post_install` auto-setup (`codex-notify init`) so `brew install` can complete setup without manual init in standard cases.
 - Added explicit popup timeout configuration via `CODEX_NOTIFY_POPUP_TIMEOUT_SECONDS` while preserving `CODEX_NOTIFY_APPROVAL_TIMEOUT_SECONDS` as a compatibility fallback/override.
+- Added popup timeout selection to the popup `...` menu, with the chosen value saved for future popups.
 
 ### Changed
 - Popup window now uses a fixed size regardless of message length.
-- Popup now provides a `Read more` button to display the full message text on demand.
+- Popup `Read more` now jumps back to the configured Codex terminal/IDE instead of opening a separate full-text dialog.
+- Popup `...` and close buttons are larger for easier interaction.
 - Popup now closes automatically when the configured terminal app becomes active again.
 - Added GitHub Issues feedback links to CLI help and README.
 

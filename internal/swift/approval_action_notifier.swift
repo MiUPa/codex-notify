@@ -16,6 +16,49 @@ struct Config {
     let choices: [Choice]
 }
 
+private struct PopupSettings: Codable {
+    let popupTimeoutSeconds: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case popupTimeoutSeconds = "popup_timeout_seconds"
+    }
+}
+
+private let appName = "codex-notify"
+private let popupSettingsFilename = "settings.json"
+private let popupTimeoutMenuChoices = [5, 10, 15, 30, 45, 60, 120]
+
+private func clampTimeoutSeconds(_ value: Int) -> Int {
+    max(5, min(300, value))
+}
+
+private func popupSettingsURL() -> URL? {
+    guard let appSupportURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+        return nil
+    }
+    return appSupportURL
+        .appendingPathComponent(appName, isDirectory: true)
+        .appendingPathComponent(popupSettingsFilename, isDirectory: false)
+}
+
+private func savePopupTimeoutSetting(_ seconds: Int) {
+    guard let settingsURL = popupSettingsURL() else {
+        return
+    }
+
+    let settings = PopupSettings(popupTimeoutSeconds: clampTimeoutSeconds(seconds))
+    do {
+        try FileManager.default.createDirectory(
+            at: settingsURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let data = try JSONEncoder().encode(settings)
+        try data.write(to: settingsURL, options: .atomic)
+    } catch {
+        fputs("failed to save popup timeout setting: \(error)\n", stderr)
+    }
+}
+
 private func parseArgs(_ args: [String]) -> Config {
     func value(_ key: String) -> String? {
         guard let idx = args.firstIndex(of: key), idx + 1 < args.count else {
@@ -354,6 +397,7 @@ final class PopupController: NSObject {
     private var progressTrackWidth: CGFloat = 0
     private var openedAt = Date()
     private var isClosing = false
+    private var timeoutSeconds: Int
     private let fixedWidth: CGFloat = 392
     private let fixedHeight: CGFloat = 168
     private let horizontalPadding: CGFloat = 14
@@ -362,6 +406,7 @@ final class PopupController: NSObject {
 
     init(config: Config) {
         self.config = config
+        self.timeoutSeconds = clampTimeoutSeconds(config.timeoutSeconds)
     }
 
     deinit {
@@ -442,8 +487,11 @@ final class PopupController: NSObject {
         iconView.contentTintColor = NSColor.controlAccentColor
         root.addSubview(iconView)
 
+        let trailingButtonsWidth: CGFloat = 96
+        let headerLabelWidth = width - (horizontalPadding + 24) - trailingButtonsWidth
+
         let titleLabel = NSTextField(labelWithString: config.title)
-        titleLabel.frame = NSRect(x: horizontalPadding + 24, y: headerY + 11, width: width - 82, height: 16)
+        titleLabel.frame = NSRect(x: horizontalPadding + 24, y: headerY + 11, width: headerLabelWidth, height: 16)
         titleLabel.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
         titleLabel.textColor = .labelColor
         root.addSubview(titleLabel)
@@ -453,16 +501,31 @@ final class PopupController: NSObject {
             meta += "  •  \(shortenedIdentifier(config.identifier))"
         }
         let metaLabel = NSTextField(labelWithString: meta)
-        metaLabel.frame = NSRect(x: horizontalPadding + 24, y: headerY - 1, width: width - 82, height: 12)
+        metaLabel.frame = NSRect(x: horizontalPadding + 24, y: headerY - 1, width: headerLabelWidth, height: 12)
         metaLabel.font = NSFont.systemFont(ofSize: 10, weight: .medium)
         metaLabel.textColor = .tertiaryLabelColor
         root.addSubview(metaLabel)
 
+        let moreButton = NSButton(title: "...", target: self, action: #selector(showPopupMenu(_:)))
+        moreButton.isBordered = false
+        moreButton.frame = NSRect(x: width - 82, y: headerY - 1, width: 36, height: 36)
+        moreButton.font = NSFont.systemFont(ofSize: 22, weight: .bold)
+        moreButton.contentTintColor = .tertiaryLabelColor
+        if #available(macOS 11.0, *) {
+            moreButton.image = NSImage(systemSymbolName: "ellipsis.circle", accessibilityDescription: "Popup options")
+            moreButton.imagePosition = .imageOnly
+            moreButton.imageScaling = .scaleProportionallyUpOrDown
+            moreButton.contentTintColor = .labelColor
+            moreButton.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 18, weight: .semibold)
+            moreButton.title = ""
+        }
+        root.addSubview(moreButton)
+
         let closeButton = NSButton(title: "×", target: self, action: #selector(closePopup))
         closeButton.isBordered = false
-        closeButton.frame = NSRect(x: width - 28, y: headerY + 9, width: 14, height: 14)
-        closeButton.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
-        closeButton.contentTintColor = .tertiaryLabelColor
+        closeButton.frame = NSRect(x: width - 40, y: headerY + 3, width: 28, height: 28)
+        closeButton.font = NSFont.systemFont(ofSize: 20, weight: .semibold)
+        closeButton.contentTintColor = .labelColor
         root.addSubview(closeButton)
 
         let messageWidth = width - (horizontalPadding * 2)
@@ -547,30 +610,11 @@ final class PopupController: NSObject {
 
         self.panel = panel
         openedAt = Date()
-        panel.alphaValue = 0
         startDismissOnActivateObserver()
+        panel.alphaValue = 1
+        panel.setFrame(finalFrame, display: true)
         panel.orderFrontRegardless()
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.17
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            panel.animator().alphaValue = 1
-            panel.animator().setFrame(finalFrame, display: true)
-        }
-
-        timeoutTimer = Timer.scheduledTimer(
-            timeInterval: TimeInterval(config.timeoutSeconds),
-            target: self,
-            selector: #selector(closePopup),
-            userInfo: nil,
-            repeats: false
-        )
-        progressTimer = Timer.scheduledTimer(
-            timeInterval: 0.05,
-            target: self,
-            selector: #selector(updateProgress),
-            userInfo: nil,
-            repeats: true
-        )
+        scheduleTimeoutCountdown()
     }
 
     private func startDismissOnActivateObserver() {
@@ -619,17 +663,35 @@ final class PopupController: NSObject {
         return max(28, ceil(rect.height))
     }
 
-    @objc private func showReadMore() {
-        let alert = NSAlert()
-        alert.alertStyle = .informational
-        alert.messageText = config.title
-        alert.informativeText = config.message
-        alert.addButton(withTitle: "Close")
-        if let panel {
-            alert.beginSheetModal(for: panel)
-        } else {
-            _ = alert.runModal()
+    private func activateReadMoreTarget() -> Bool {
+        let bundleID = config.dismissOnActivateBundleID.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !bundleID.isEmpty,
+           let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first,
+           app.activate(options: []) {
+            return true
         }
+
+        for (index, choice) in config.choices.enumerated() {
+            let command = choice.command.trimmingCharacters(in: .whitespacesAndNewlines)
+            if command.isEmpty {
+                continue
+            }
+            if choiceIntent(for: choice.label, index: index, total: config.choices.count) == .neutral {
+                runShell(command)
+                return true
+            }
+        }
+
+        return false
+    }
+
+    @objc private func showReadMore() {
+        if activateReadMoreTarget() {
+            closePopup()
+            return
+        }
+
+        closePopup()
     }
 
     @objc private func updateProgress() {
@@ -637,10 +699,41 @@ final class PopupController: NSObject {
             return
         }
         let elapsed = Date().timeIntervalSince(openedAt)
-        let ratio = max(0, min(1, 1 - (elapsed / Double(config.timeoutSeconds))))
+        let ratio = max(0, min(1, 1 - (elapsed / Double(timeoutSeconds))))
         var frame = fill.frame
         frame.size.width = progressTrackWidth * CGFloat(ratio)
         fill.frame = frame
+    }
+
+    @objc private func showPopupMenu(_ sender: NSButton) {
+        let menu = NSMenu()
+        let headerItem = NSMenuItem(title: "Dismiss after", action: nil, keyEquivalent: "")
+        headerItem.isEnabled = false
+        menu.addItem(headerItem)
+        menu.addItem(.separator())
+
+        for seconds in popupTimeoutMenuChoices {
+            let item = NSMenuItem(
+                title: timeoutMenuLabel(seconds),
+                action: #selector(selectPopupTimeout(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.tag = seconds
+            item.state = seconds == timeoutSeconds ? .on : .off
+            menu.addItem(item)
+        }
+
+        if let event = NSApp.currentEvent {
+            NSMenu.popUpContextMenu(menu, with: event, for: sender)
+            return
+        }
+
+        _ = menu.popUp(positioning: nil, at: NSPoint(x: sender.bounds.maxX, y: sender.bounds.minY), in: sender)
+    }
+
+    @objc private func selectPopupTimeout(_ sender: NSMenuItem) {
+        applyPopupTimeout(sender.tag)
     }
 
     @objc private func choiceClicked(_ sender: NSButton) {
@@ -651,6 +744,38 @@ final class PopupController: NSObject {
         }
         runShell(config.choices[idx].command)
         closePopup()
+    }
+
+    private func timeoutMenuLabel(_ seconds: Int) -> String {
+        "\(seconds) seconds"
+    }
+
+    private func applyPopupTimeout(_ seconds: Int) {
+        timeoutSeconds = clampTimeoutSeconds(seconds)
+        savePopupTimeoutSetting(timeoutSeconds)
+        scheduleTimeoutCountdown()
+    }
+
+    private func scheduleTimeoutCountdown() {
+        timeoutTimer?.invalidate()
+        progressTimer?.invalidate()
+        openedAt = Date()
+        updateProgress()
+
+        timeoutTimer = Timer.scheduledTimer(
+            timeInterval: TimeInterval(timeoutSeconds),
+            target: self,
+            selector: #selector(closePopup),
+            userInfo: nil,
+            repeats: false
+        )
+        progressTimer = Timer.scheduledTimer(
+            timeInterval: 0.05,
+            target: self,
+            selector: #selector(updateProgress),
+            userInfo: nil,
+            repeats: true
+        )
     }
 
     @objc private func closePopup() {

@@ -487,7 +487,7 @@ final class PopupController: NSObject {
         iconView.contentTintColor = NSColor.controlAccentColor
         root.addSubview(iconView)
 
-        let trailingButtonsWidth: CGFloat = 62
+        let trailingButtonsWidth: CGFloat = 96
         let headerLabelWidth = width - (horizontalPadding + 24) - trailingButtonsWidth
 
         let titleLabel = NSTextField(labelWithString: config.title)
@@ -508,21 +508,24 @@ final class PopupController: NSObject {
 
         let moreButton = NSButton(title: "...", target: self, action: #selector(showPopupMenu(_:)))
         moreButton.isBordered = false
-        moreButton.frame = NSRect(x: width - 50, y: headerY + 7, width: 18, height: 18)
-        moreButton.font = NSFont.systemFont(ofSize: 11, weight: .bold)
+        moreButton.frame = NSRect(x: width - 82, y: headerY - 1, width: 36, height: 36)
+        moreButton.font = NSFont.systemFont(ofSize: 22, weight: .bold)
         moreButton.contentTintColor = .tertiaryLabelColor
         if #available(macOS 11.0, *) {
             moreButton.image = NSImage(systemSymbolName: "ellipsis.circle", accessibilityDescription: "Popup options")
             moreButton.imagePosition = .imageOnly
+            moreButton.imageScaling = .scaleProportionallyUpOrDown
+            moreButton.contentTintColor = .labelColor
+            moreButton.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 18, weight: .semibold)
             moreButton.title = ""
         }
         root.addSubview(moreButton)
 
         let closeButton = NSButton(title: "×", target: self, action: #selector(closePopup))
         closeButton.isBordered = false
-        closeButton.frame = NSRect(x: width - 26, y: headerY + 9, width: 14, height: 14)
-        closeButton.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
-        closeButton.contentTintColor = .tertiaryLabelColor
+        closeButton.frame = NSRect(x: width - 40, y: headerY + 3, width: 28, height: 28)
+        closeButton.font = NSFont.systemFont(ofSize: 20, weight: .semibold)
+        closeButton.contentTintColor = .labelColor
         root.addSubview(closeButton)
 
         let messageWidth = width - (horizontalPadding * 2)
@@ -607,15 +610,10 @@ final class PopupController: NSObject {
 
         self.panel = panel
         openedAt = Date()
-        panel.alphaValue = 0
         startDismissOnActivateObserver()
+        panel.alphaValue = 1
+        panel.setFrame(finalFrame, display: true)
         panel.orderFrontRegardless()
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.17
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            panel.animator().alphaValue = 1
-            panel.animator().setFrame(finalFrame, display: true)
-        }
         scheduleTimeoutCountdown()
     }
 
@@ -665,17 +663,35 @@ final class PopupController: NSObject {
         return max(28, ceil(rect.height))
     }
 
-    @objc private func showReadMore() {
-        let alert = NSAlert()
-        alert.alertStyle = .informational
-        alert.messageText = config.title
-        alert.informativeText = config.message
-        alert.addButton(withTitle: "Close")
-        if let panel {
-            alert.beginSheetModal(for: panel)
-        } else {
-            _ = alert.runModal()
+    private func activateReadMoreTarget() -> Bool {
+        let bundleID = config.dismissOnActivateBundleID.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !bundleID.isEmpty,
+           let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first,
+           app.activate(options: []) {
+            return true
         }
+
+        for (index, choice) in config.choices.enumerated() {
+            let command = choice.command.trimmingCharacters(in: .whitespacesAndNewlines)
+            if command.isEmpty {
+                continue
+            }
+            if choiceIntent(for: choice.label, index: index, total: config.choices.count) == .neutral {
+                runShell(command)
+                return true
+            }
+        }
+
+        return false
+    }
+
+    @objc private func showReadMore() {
+        if activateReadMoreTarget() {
+            closePopup()
+            return
+        }
+
+        closePopup()
     }
 
     @objc private func updateProgress() {

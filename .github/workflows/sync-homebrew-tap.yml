@@ -14,12 +14,45 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  detect-homebrew-token:
+    runs-on: ubuntu-latest
+    outputs:
+      has_token: ${{ steps.detect.outputs.has_token }}
+    steps:
+      - id: detect
+        env:
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${HOMEBREW_TAP_GITHUB_TOKEN}" ]]; then
+            echo "has_token=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "has_token=false" >> "${GITHUB_OUTPUT}"
+          fi
+
   sync-formula:
-    if: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN != '' }}
+    if: ${{ needs.detect-homebrew-token.outputs.has_token == 'true' }}
+    needs: detect-homebrew-token
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source repository
         uses: actions/checkout@v4
+
+      - name: Resolve latest release version
+        id: latest-release
+        run: |
+          set -euo pipefail
+          VERSION="$(curl -fsSL -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/latest" | jq -r .tag_name)"
+          if [[ -z "${VERSION}" || "${VERSION}" == "null" ]]; then
+            echo "latest release tag was not found" >&2
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+
+      - name: Generate Formula from latest release checksums
+        run: |
+          set -euo pipefail
+          ./scripts/gen_formula.sh "${{ steps.latest-release.outputs.version }}" > /tmp/codex-notify.rb
 
       - name: Checkout tap repository
         uses: actions/checkout@v4
@@ -31,7 +64,7 @@ jobs:
       - name: Sync Formula file
         run: |
           set -euo pipefail
-          cp Formula/codex-notify.rb homebrew-codex-notify/Formula/codex-notify.rb
+          cp /tmp/codex-notify.rb homebrew-codex-notify/Formula/codex-notify.rb
 
       - name: Commit and push Formula update
         working-directory: homebrew-codex-notify
@@ -51,7 +84,8 @@ jobs:
           git push origin HEAD:main
 
   missing-token:
-    if: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN == '' }}
+    if: ${{ needs.detect-homebrew-token.outputs.has_token != 'true' }}
+    needs: detect-homebrew-token
     runs-on: ubuntu-latest
     steps:
       - name: Report missing token

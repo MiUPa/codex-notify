@@ -9,6 +9,22 @@ permissions:
   contents: write
 
 jobs:
+  detect-homebrew-token:
+    runs-on: ubuntu-latest
+    outputs:
+      has_token: ${{ steps.detect.outputs.has_token }}
+    steps:
+      - id: detect
+        env:
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${HOMEBREW_TAP_GITHUB_TOKEN}" ]]; then
+            echo "has_token=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "has_token=false" >> "${GITHUB_OUTPUT}"
+          fi
+
   build-and-release:
     runs-on: ubuntu-latest
     steps:
@@ -46,8 +62,10 @@ jobs:
             dist/checksums.txt
 
   update-homebrew-tap:
-    if: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN != '' }}
-    needs: build-and-release
+    if: ${{ needs.detect-homebrew-token.outputs.has_token == 'true' }}
+    needs:
+      - build-and-release
+      - detect-homebrew-token
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source repository
@@ -98,8 +116,10 @@ jobs:
           git push origin HEAD:main
 
   missing-homebrew-token:
-    if: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN == '' }}
-    needs: build-and-release
+    if: ${{ needs.detect-homebrew-token.outputs.has_token != 'true' }}
+    needs:
+      - build-and-release
+      - detect-homebrew-token
     runs-on: ubuntu-latest
     steps:
       - name: Report missing token

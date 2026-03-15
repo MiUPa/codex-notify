@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-03-15
+
+### Fixed
+- Fixed GitHub Actions release and tap-sync workflows so Homebrew token checks no longer fail during job selection.
+- Fixed tap sync automation to regenerate the Formula from the latest published release instead of copying a stale repository snapshot.
+
 ## [0.3.4] - 2026-03-15
 
 ### Changed
@@ -12,7 +18,7 @@ All notable changes to this project are documented in this file.
 - Popup header controls are simplified by removing the bolt icon and using a plain `...` menu label.
 
 ### Fixed
-- Fixed release automation so Formula generation no longer executes embedded backticks and Homebrew tap sync is skipped cleanly when the tap token is not configured.
+- Fixed release automation so Formula generation no longer executes embedded backticks.
 - Fixed payload preview rendering by stripping Markdown link targets and code ticks before display, and truncating by rune count so Japanese text previews stay readable.
 - Fixed popup visibility across Spaces/desktops by making the popup panel stationary while its timeout is active.
 

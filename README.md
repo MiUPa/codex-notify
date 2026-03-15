@@ -19,7 +19,7 @@ Issues:
 
 ## Demo
 
-Latest popup UI (v0.3.1, all events unified to bottom-right popup):
+Latest popup UI:
 
 ![codex-notify popup demo](docs/assets/demo-popup-v031.svg)
 
@@ -114,7 +114,7 @@ codex-notify uninstall --restore-config
 - `approval-requested` supports selectable actions (`Open`, `Approve`, `Reject`) and dynamic payload choices.
 - While the approval popup is open, incoming notifications are suppressed to avoid interruption during user action.
 - Popup closes automatically when the configured terminal app becomes active again.
-- Popup window size is fixed at a constant frame, and `Read more` jumps back to the configured Codex terminal/IDE.
+- Popup window uses a wider fixed frame to show more of the message before truncation, and `Read more` jumps back to the configured Codex terminal/IDE.
 - Popup timeout can be changed from the popup `...` menu and is saved for future popups.
 - Popup display no longer steals keyboard focus from the app you are currently using.
 - If popup helper is unavailable, it falls back to system notification.

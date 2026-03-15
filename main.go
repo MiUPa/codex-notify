@@ -23,16 +23,17 @@ import (
 )
 
 const (
-	appName              = "codex-notify"
-	defaultNotifyLine    = `notify = ["codex-notify", "hook"]`
-	defaultTerminalID    = "com.mitchellh.ghostty"
-	defaultApproveSeq    = "y,enter"
-	defaultRejectSeq     = "n,enter"
-	approvalUIPopup      = "popup"
-	approvalUISingle     = "single"
-	approvalUIMulti      = "multi"
-	notificationUIPopup  = "popup"
-	notificationUISystem = "system"
+	appName                = "codex-notify"
+	defaultNotifyLine      = `notify = ["codex-notify", "hook"]`
+	defaultTerminalID      = "com.mitchellh.ghostty"
+	defaultApproveSeq      = "y,enter"
+	defaultRejectSeq       = "n,enter"
+	payloadPreviewMaxRunes = 600
+	approvalUIPopup        = "popup"
+	approvalUISingle       = "single"
+	approvalUIMulti        = "multi"
+	notificationUIPopup    = "popup"
+	notificationUISystem   = "system"
 
 	defaultPopupTimeoutSeconds  = 45
 	minPopupTimeoutSeconds      = 5
@@ -48,6 +49,7 @@ const (
 var (
 	rootNotifyLineRE  = regexp.MustCompile(`^notify\s*=`)
 	codexHookArrayRE  = regexp.MustCompile(`\[\s*"(?:[^"]*/)?codex-notify"\s*,\s*"hook"\s*\]`)
+	markdownLinkRE    = regexp.MustCompile(`\[([^\]]+)\]\([^)]+\)`)
 	errDialogCanceled = errors.New("dialog canceled")
 	userConfigDir     = os.UserConfigDir
 )
@@ -723,11 +725,22 @@ func payloadPreviewMessage(payload map[string]any) string {
 			msg = strings.Join(msgs, " ")
 		}
 	}
-	msg = strings.Join(strings.Fields(msg), " ")
-	if len(msg) > 180 {
-		msg = msg[:177] + "..."
+	msg = sanitizePreviewMessage(msg)
+	return truncatePreviewMessage(msg)
+}
+
+func sanitizePreviewMessage(msg string) string {
+	msg = markdownLinkRE.ReplaceAllString(msg, "$1")
+	msg = strings.ReplaceAll(msg, "`", "")
+	return strings.Join(strings.Fields(msg), " ")
+}
+
+func truncatePreviewMessage(msg string) string {
+	runes := []rune(msg)
+	if len(runes) <= payloadPreviewMaxRunes {
+		return msg
 	}
-	return msg
+	return string(runes[:payloadPreviewMaxRunes-3]) + "..."
 }
 
 func getString(payload map[string]any, key string) string {

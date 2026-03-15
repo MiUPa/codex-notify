@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -156,6 +157,58 @@ func TestApprovalActionTimeoutSeconds(t *testing.T) {
 
 		if got := approvalActionTimeoutSeconds(); got != 24 {
 			t.Fatalf("approvalActionTimeoutSeconds() = %d, want 24", got)
+		}
+	})
+}
+
+func TestPayloadPreviewMessage(t *testing.T) {
+	t.Run("prefers assistant message and normalizes whitespace", func(t *testing.T) {
+		payload := map[string]any{
+			"last-assistant-message": "  first line\n\n second\tline  ",
+			"input-messages":         []string{"ignored"},
+		}
+
+		if got := payloadPreviewMessage(payload); got != "first line second line" {
+			t.Fatalf("payloadPreviewMessage() = %q, want %q", got, "first line second line")
+		}
+	})
+
+	t.Run("falls back to input messages", func(t *testing.T) {
+		payload := map[string]any{
+			"input_messages": []any{"  alpha  ", "beta", "", "gamma"},
+		}
+
+		if got := payloadPreviewMessage(payload); got != "alpha beta gamma" {
+			t.Fatalf("payloadPreviewMessage() = %q, want %q", got, "alpha beta gamma")
+		}
+	})
+
+	t.Run("strips markdown link targets and code ticks", func(t *testing.T) {
+		payload := map[string]any{
+			"message": "Updated [main.go:31](/tmp/main.go#L31) and `main_test.go` for readability.",
+		}
+
+		if got := payloadPreviewMessage(payload); got != "Updated main.go:31 and main_test.go for readability." {
+			t.Fatalf("payloadPreviewMessage() = %q, want %q", got, "Updated main.go:31 and main_test.go for readability.")
+		}
+	})
+
+	t.Run("truncates by rune count", func(t *testing.T) {
+		longMessage := strings.Repeat("あ", payloadPreviewMaxRunes+25)
+		payload := map[string]any{
+			"message": longMessage,
+		}
+
+		got := payloadPreviewMessage(payload)
+		if len([]rune(got)) != payloadPreviewMaxRunes {
+			t.Fatalf("len([]rune(payloadPreviewMessage())) = %d, want %d", len([]rune(got)), payloadPreviewMaxRunes)
+		}
+		if !strings.HasSuffix(got, "...") {
+			t.Fatalf("payloadPreviewMessage() = %q, want suffix %q", got, "...")
+		}
+		wantPrefix := strings.Repeat("あ", payloadPreviewMaxRunes-3)
+		if !strings.HasPrefix(got, wantPrefix) {
+			t.Fatalf("payloadPreviewMessage() prefix = %q, want %q", string([]rune(got)[:8]), string([]rune(wantPrefix)[:8]))
 		}
 	})
 }

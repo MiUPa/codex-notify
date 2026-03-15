@@ -4,27 +4,17 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
-### Added
-- Added new README demo asset for unified popup UI (`docs/assets/demo-popup-v031.svg`).
-- Added release workflow automation to update `MiUPa/homebrew-codex-notify` Formula after each version tag release.
-- Added a `main` branch sync workflow to automatically reflect Formula updates to `MiUPa/homebrew-codex-notify`.
-- Added Homebrew Formula `post_install` auto-setup (`codex-notify init`) so `brew install` can complete setup without manual init in standard cases.
-- Added explicit popup timeout configuration via `CODEX_NOTIFY_POPUP_TIMEOUT_SECONDS` while preserving `CODEX_NOTIFY_APPROVAL_TIMEOUT_SECONDS` as a compatibility fallback/override.
-- Added popup timeout selection to the popup `...` menu, with the chosen value saved for future popups.
+## [0.3.4] - 2026-03-15
 
 ### Changed
-- Popup window now uses a fixed size regardless of message length.
-- Popup `Read more` now jumps back to the configured Codex terminal/IDE instead of opening a separate full-text dialog.
-- Popup `...` and close buttons are larger for easier interaction.
-- Popup now closes automatically when the configured terminal app becomes active again.
-- Added GitHub Issues feedback links to CLI help and README.
+- Popup window now uses a wider fixed frame with stable dimensions before `Read more`, longer preview text, and tighter inline action spacing.
+- Single neutral actions such as `Open` now render as inline text links instead of large footer buttons.
+- Popup header controls are simplified by removing the bolt icon and using a plain `...` menu label.
 
 ### Fixed
-- Suppressed new notifications while the approval interaction popup is active to avoid interrupting user choices.
-- Fixed popup helper fallback-to-system issues in restricted environments by using writable runtime directories and a writable Swift module cache path.
-- Fixed popup panel sizing so the window frame stays locked to the standard dimensions during display and animation.
-- Fixed popup activation so showing the popup no longer steals keyboard focus from the current app.
 - Fixed release automation so Formula generation no longer executes embedded backticks and Homebrew tap sync is skipped cleanly when the tap token is not configured.
+- Fixed payload preview rendering by stripping Markdown link targets and code ticks before display, and truncating by rune count so Japanese text previews stay readable.
+- Fixed popup visibility across Spaces/desktops by making the popup panel stationary while its timeout is active.
 
 ## [0.3.2] - 2026-02-24
 

@@ -1,15 +1,15 @@
 class CodexNotify < Formula
   desc "macOS desktop notification bridge for Codex CLI"
   homepage "https://github.com/MiUPa/codex-notify"
-  version "0.3.2"
+  version "0.3.5"
   license "Apache-2.0"
 
   if Hardware::CPU.arm?
-    url "https://github.com/MiUPa/codex-notify/releases/download/v0.3.2/codex-notify_v0.3.2_darwin_arm64.tar.gz"
-    sha256 "b6c6a8616cfcb4f554554568bab7450f71b587e8a5e36a8189b048fc60e1559e"
+    url "https://github.com/MiUPa/codex-notify/releases/download/v0.3.5/codex-notify_v0.3.5_darwin_arm64.tar.gz"
+    sha256 "63b3e69554af6758e2c31ea122a0c6e8ea08d475e44fb85fe1a6c737ead7015c"
   else
-    url "https://github.com/MiUPa/codex-notify/releases/download/v0.3.2/codex-notify_v0.3.2_darwin_amd64.tar.gz"
-    sha256 "751f7fa6d668a4a4afbc316b8ee0b5c9fc13616a7e8a3f7e2e4c6a83e88fb71b"
+    url "https://github.com/MiUPa/codex-notify/releases/download/v0.3.5/codex-notify_v0.3.5_darwin_amd64.tar.gz"
+    sha256 "7b0efac09dd6096c01fb1d01fdf79ae40bcf3ad36cbbaf0bb9ca3b68ee993aba"
   end
 
   def install

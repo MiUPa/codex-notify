@@ -4,6 +4,20 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-11
+
+### Fixed
+- Suppressed popup notifications entirely when the configured Codex terminal/IDE is already frontmost, instead of flashing a popup over the active Codex window.
+- Added session-scoped suppression for wrapped Ghostty and Terminal.app sessions so a notification is skipped only when the same source session is frontmost.
+- Scoped approval-interaction suppression to each thread so one Codex session cannot hide another session's notifications.
+- Preserved config file permissions and recognized legacy timestamped config backups during restore.
+- Made popup actions asynchronous so a slow AppleScript action cannot freeze the popup timer.
+- Made local builds select the host Mac architecture by default.
+
+### Added
+- Added `CODEX_NOTIFY_SUPPRESS_FRONTMOST_BUNDLE_IDS` for app-level popup suppression across multiple frontmost apps such as Ghostty, Terminal, VS Code, and Zed.
+- Added `codex-notify launch -- codex ...` to inject source-session metadata into Codex for exact Ghostty/Terminal frontmost matching.
+
 ## [0.3.5] - 2026-03-15
 
 ### Fixed

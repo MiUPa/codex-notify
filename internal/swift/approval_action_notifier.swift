@@ -12,6 +12,7 @@ struct Config {
     let identifier: String
     let timeoutSeconds: Int
     let dismissOnActivateBundleID: String
+    let suppressFrontmostBundleIDs: [String]
     let interactionLockFile: String
     let choices: [Choice]
 }
@@ -86,6 +87,7 @@ private func parseArgs(_ args: [String]) -> Config {
     let identifier = value("--identifier") ?? ""
     let dismissOnActivateBundleID = value("--dismiss-on-activate-bundle-id")?
         .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    let suppressFrontmostBundleIDs = normalizedBundleIDs(values("--suppress-frontmost-bundle-id"))
     let interactionLockFile = value("--interaction-lock-file") ?? ""
 
     let timeoutRaw = value("--timeout-seconds") ?? "45"
@@ -122,9 +124,26 @@ private func parseArgs(_ args: [String]) -> Config {
         identifier: identifier,
         timeoutSeconds: timeoutSeconds,
         dismissOnActivateBundleID: dismissOnActivateBundleID,
+        suppressFrontmostBundleIDs: suppressFrontmostBundleIDs,
         interactionLockFile: interactionLockFile,
         choices: choices
     )
+}
+
+private func normalizedBundleIDs(_ values: [String]) -> [String] {
+    var out: [String] = []
+    var seen = Set<String>()
+
+    for value in values {
+        let bundleID = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if bundleID.isEmpty || seen.contains(bundleID) {
+            continue
+        }
+        seen.insert(bundleID)
+        out.append(bundleID)
+    }
+
+    return out
 }
 
 private func clearInteractionLock(_ path: String) {
@@ -149,9 +168,18 @@ private func runShell(_ command: String) {
         process.standardError = nullOut
     }
 
+    process.terminationHandler = { finishedProcess in
+        guard finishedProcess.terminationStatus != 0 else {
+            return
+        }
+        fputs(
+            "action command exited with status \(finishedProcess.terminationStatus): \(command)\n",
+            stderr
+        )
+    }
+
     do {
         try process.run()
-        process.waitUntilExit()
     } catch {
         fputs("failed to run action command: \(error)\n", stderr)
     }
@@ -419,6 +447,20 @@ final class PopupController: NSObject {
         clearInteractionLock(config.interactionLockFile)
     }
 
+    func shouldSuppressInitialPresentation(previousFrontmostApp: NSRunningApplication?) -> Bool {
+        shouldSuppressForFrontmostApp(previousFrontmostApp)
+    }
+
+    private func shouldSuppressForFrontmostApp(_ app: NSRunningApplication?) -> Bool {
+        guard let bundleID = app?.bundleIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines) else {
+            return false
+        }
+        guard !bundleID.isEmpty else {
+            return false
+        }
+        return config.suppressFrontmostBundleIDs.contains(bundleID)
+    }
+
     func show() {
         let columns = columnsPerRow(choiceCount: config.choices.count)
         let rows = chunkChoices(config.choices, columns: columns)
@@ -596,6 +638,7 @@ final class PopupController: NSObject {
             self.panel = panel
             openedAt = Date()
             startDismissOnActivateObserver()
+            NSApp.activate(ignoringOtherApps: true)
             panel.alphaValue = 1
             panel.setFrame(finalFrame, display: true)
             panel.orderFrontRegardless()
@@ -630,6 +673,7 @@ final class PopupController: NSObject {
         self.panel = panel
         openedAt = Date()
         startDismissOnActivateObserver()
+        NSApp.activate(ignoringOtherApps: true)
         panel.alphaValue = 1
         panel.setFrame(finalFrame, display: true)
         panel.orderFrontRegardless()
@@ -637,8 +681,7 @@ final class PopupController: NSObject {
     }
 
     private func startDismissOnActivateObserver() {
-        let bundleID = config.dismissOnActivateBundleID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !bundleID.isEmpty, appActivationObserver == nil else {
+        guard !config.suppressFrontmostBundleIDs.isEmpty, appActivationObserver == nil else {
             return
         }
 
@@ -653,7 +696,7 @@ final class PopupController: NSObject {
             guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else {
                 return
             }
-            guard app.bundleIdentifier == bundleID else {
+            guard self.shouldSuppressForFrontmostApp(app) else {
                 return
             }
             self.closePopup()
@@ -848,8 +891,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if controller.shouldSuppressInitialPresentation(previousFrontmostApp: previousFrontmostApp) {
+            NSApp.terminate(nil)
+            return
+        }
+
         controller.show()
-        DispatchQueue.main.async { [previousFrontmostApp] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [previousFrontmostApp] in
             guard let previousFrontmostApp else {
                 return
             }

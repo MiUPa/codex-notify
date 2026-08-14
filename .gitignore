@@ -1,3 +1,4 @@
 codex-notify
 bin/
 dist/
+.DS_Store

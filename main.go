@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"crypto/sha256"
 	_ "embed"
@@ -19,6 +18,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -26,6 +26,7 @@ const (
 	appName                = "codex-notify"
 	defaultNotifyLine      = `notify = ["codex-notify", "hook"]`
 	defaultTerminalID      = "com.mitchellh.ghostty"
+	terminalAppBundleID    = "com.apple.Terminal"
 	defaultApproveSeq      = "y,enter"
 	defaultRejectSeq       = "n,enter"
 	payloadPreviewMaxRunes = 600
@@ -42,16 +43,30 @@ const (
 	helperSourceFilename        = "approval_action_notifier.swift"
 	helperBinaryName            = "approval_action_notifier"
 	helperHashName              = "approval_action_notifier.sha256"
-	interactionLockName         = "approval_interaction.lock"
+	interactionLockPrefix       = "approval_interaction"
 	interactionLockGraceSeconds = 5
 )
 
 var (
 	rootNotifyLineRE  = regexp.MustCompile(`^notify\s*=`)
-	codexHookArrayRE  = regexp.MustCompile(`\[\s*"(?:[^"]*/)?codex-notify"\s*,\s*"hook"\s*\]`)
+	quotedStringRE    = regexp.MustCompile(`"([^"\\]|\\.)*"`)
 	markdownLinkRE    = regexp.MustCompile(`\[([^\]]+)\]\([^)]+\)`)
 	errDialogCanceled = errors.New("dialog canceled")
 	userConfigDir     = os.UserConfigDir
+	userCacheDir      = os.UserCacheDir
+)
+
+const (
+	hostKindUnknown  = ""
+	hostKindGhostty  = "ghostty"
+	hostKindTerminal = "terminal"
+)
+
+const (
+	envSourceHostKind   = "CODEX_NOTIFY_SOURCE_HOST_KIND"
+	envSourceBundleID   = "CODEX_NOTIFY_SOURCE_BUNDLE_ID"
+	envSourceTTY        = "CODEX_NOTIFY_SOURCE_TTY"
+	envSourceTerminalID = "CODEX_NOTIFY_SOURCE_TERMINAL_ID"
 )
 
 //go:embed internal/swift/approval_action_notifier.swift
@@ -64,10 +79,38 @@ type notificationRequest struct {
 	ExecuteOnClick    string
 	ActivateBundleID  string
 	PopupPrimaryLabel string
+
+	SuppressFrontmostBundleIDs   []string
+	FrontmostSuppressionExplicit bool
 }
 
 type popupSettings struct {
 	PopupTimeoutSeconds int `json:"popup_timeout_seconds,omitempty"`
+}
+
+type sourceSession struct {
+	SessionID string    `json:"session_id"`
+	HostKind  string    `json:"host_kind"`
+	BundleID  string    `json:"bundle_id"`
+	CodexPID  int       `json:"codex_pid"`
+	CreatedAt time.Time `json:"created_at"`
+
+	TTY        string `json:"tty,omitempty"`
+	TerminalID string `json:"terminal_id,omitempty"`
+}
+
+type hookSuppressionContext struct {
+	SuppressNotification bool
+	BundleIDs            []string
+	Explicit             bool
+}
+
+type commandExitError struct {
+	code int
+}
+
+func (e commandExitError) Error() string {
+	return fmt.Sprintf("command exited with code %d", e.code)
 }
 
 func main() {
@@ -80,6 +123,8 @@ func main() {
 	switch os.Args[1] {
 	case "init":
 		err = runInit(os.Args[2:])
+	case "launch":
+		err = runLaunch(os.Args[2:])
 	case "doctor":
 		err = runDoctor(os.Args[2:])
 	case "test":
@@ -98,6 +143,10 @@ func main() {
 	}
 
 	if err != nil {
+		var exitErr commandExitError
+		if errors.As(err, &exitErr) {
+			os.Exit(exitErr.code)
+		}
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
@@ -108,6 +157,7 @@ func printUsage(w io.Writer) {
 
 Usage:
   %s init [--replace] [--config path]
+  %s launch -- codex [args...]
   %s doctor [--config path]
   %s test [message]
   %s hook [json-payload]
@@ -116,6 +166,7 @@ Usage:
 
 Commands:
   init       Add notify hook to Codex config with timestamped backup.
+  launch     Start Codex with session capture for session-scoped suppression.
   doctor     Validate runtime requirements and config wiring.
   test       Send a local test notification.
   hook       Receive Codex notify payload and raise macOS notification.
@@ -124,7 +175,7 @@ Commands:
 
 Feedback:
   https://github.com/MiUPa/codex-notify/issues
-`, appName, appName, appName, appName, appName, appName, appName)
+`, appName, appName, appName, appName, appName, appName, appName, appName)
 }
 
 func runInit(args []string) error {
@@ -148,12 +199,12 @@ func runInit(args []string) error {
 	}
 
 	if len(existing) == 0 {
-		if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(cfgPath), 0o700); err != nil {
 			return fmt.Errorf("create config dir: %w", err)
 		}
 
 		content := defaultNotifyLine + "\n"
-		if err := writeFileAtomic(cfgPath, []byte(content), 0o644); err != nil {
+		if err := writeFileAtomic(cfgPath, []byte(content), 0o600); err != nil {
 			return fmt.Errorf("write config: %w", err)
 		}
 		fmt.Printf("created %s and configured notify hook\n", cfgPath)
@@ -180,13 +231,63 @@ func runInit(args []string) error {
 	}
 
 	updated := setNotifyLine(existing, notifyLineIdx, defaultNotifyLine)
-	if err := writeFileAtomic(cfgPath, updated, 0o644); err != nil {
+	if err := writeFileAtomic(cfgPath, updated, fileMode(cfgPath, 0o600)); err != nil {
 		return fmt.Errorf("update config: %w", err)
 	}
 
 	fmt.Printf("updated %s\n", cfgPath)
 	fmt.Printf("backup created: %s\n", backupPath)
 	return nil
+}
+
+func runLaunch(args []string) error {
+	if len(args) == 0 {
+		return errors.New("launch requires a command; use: codex-notify launch -- codex [args...]")
+	}
+	if args[0] == "--" {
+		args = args[1:]
+	}
+	if len(args) == 0 {
+		return errors.New("launch requires a command after --")
+	}
+
+	env := os.Environ()
+
+	if launchSource, ok := captureLaunchSourceSession(); ok {
+		env = applySourceSessionEnv(env, launchSource)
+	}
+
+	if runtime.GOOS == "darwin" {
+		executable, err := exec.LookPath(args[0])
+		if err != nil {
+			return fmt.Errorf("launch command: %w", err)
+		}
+		if err := syscall.Exec(executable, args, env); err != nil {
+			return fmt.Errorf("exec launch command: %w", err)
+		}
+		return nil
+	}
+
+	cmd := exec.Command(args[0], args[1:]...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Env = env
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("launch command: %w", err)
+	}
+
+	waitErr := cmd.Wait()
+	if waitErr == nil {
+		return nil
+	}
+
+	var exitErr *exec.ExitError
+	if errors.As(waitErr, &exitErr) {
+		return commandExitError{code: exitErr.ExitCode()}
+	}
+	return fmt.Errorf("wait for launched command: %w", waitErr)
 }
 
 func runDoctor(args []string) error {
@@ -287,10 +388,6 @@ func runHook(args []string) error {
 		return err
 	}
 
-	if isApprovalInteractionLockActive() {
-		return nil
-	}
-
 	payload := map[string]any{}
 	if strings.TrimSpace(payloadRaw) != "" {
 		if err := json.Unmarshal([]byte(payloadRaw), &payload); err != nil {
@@ -298,8 +395,17 @@ func runHook(args []string) error {
 		}
 	}
 
+	if isApprovalInteractionLockActive(payloadThreadID(payload)) {
+		return nil
+	}
+
+	suppression := resolveHookSuppressionContext()
+	if suppression.SuppressNotification {
+		return nil
+	}
+
 	if shouldUseNativeApprovalNotification(payload) {
-		if err := sendNativeApprovalNotification(payload); err == nil {
+		if err := sendNativeApprovalNotification(payload, suppression); err == nil {
 			return nil
 		}
 	}
@@ -307,6 +413,12 @@ func runHook(args []string) error {
 	requests, err := buildHookNotifications(payload)
 	if err != nil {
 		return err
+	}
+	if suppression.Explicit {
+		for i := range requests {
+			requests[i].SuppressFrontmostBundleIDs = suppression.BundleIDs
+			requests[i].FrontmostSuppressionExplicit = true
+		}
 	}
 
 	for _, req := range requests {
@@ -377,6 +489,14 @@ func runUninstall(args []string) error {
 	}
 
 	if *restore {
+		hasCodexNotify, err := configHasCodexNotify(current)
+		if err != nil {
+			return err
+		}
+		if !hasCodexNotify {
+			return errors.New("refusing to restore backup: current config has no codex-notify hook")
+		}
+
 		latest, err := findLatestBackup(cfgPath)
 		if err != nil {
 			return err
@@ -385,7 +505,7 @@ func runUninstall(args []string) error {
 		if err != nil {
 			return fmt.Errorf("read backup: %w", err)
 		}
-		if err := writeFileAtomic(cfgPath, backupContent, 0o644); err != nil {
+		if err := writeFileAtomic(cfgPath, backupContent, fileMode(cfgPath, fileMode(latest, 0o600))); err != nil {
 			return fmt.Errorf("restore config: %w", err)
 		}
 		fmt.Printf("restored %s from %s\n", cfgPath, latest)
@@ -403,7 +523,7 @@ func runUninstall(args []string) error {
 		return err
 	}
 
-	if err := writeFileAtomic(cfgPath, updated, 0o644); err != nil {
+	if err := writeFileAtomic(cfgPath, updated, fileMode(cfgPath, 0o600)); err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}
 
@@ -436,20 +556,21 @@ func readFileMaybe(path string) ([]byte, error) {
 
 func configHasCodexNotify(content []byte) (bool, error) {
 	lines := splitLines(content)
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-		if isCodexNotifyHookLine(trimmed) {
-			return true, nil
-		}
+	start, end := findRootNotifyRange(lines)
+	if start < 0 {
+		return false, nil
 	}
-	return false, nil
+
+	return isCodexNotifyHookLine(strings.Join(lines[start:end+1], " ")), nil
 }
 
 func findNotifyLineIndex(content []byte) int {
 	lines := splitLines(content)
+	start, _ := findRootNotifyRange(lines)
+	return start
+}
+
+func findRootNotifyRange(lines []string) (int, int) {
 	for i, line := range lines {
 		// Only match notify at root level (no indentation)
 		if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
@@ -460,17 +581,80 @@ func findNotifyLineIndex(content []byte) int {
 			continue
 		}
 		if isRootNotifyLine(trimmed) {
-			return i
+			depth := 0
+			sawArray := false
+			for j := i; j < len(lines); j++ {
+				lineDepth, openedArray := tomlBracketDelta(lines[j], j == i)
+				depth += lineDepth
+				sawArray = sawArray || openedArray
+				if !sawArray || depth <= 0 {
+					return i, j
+				}
+			}
+			return i, len(lines) - 1
 		}
 	}
-	return -1
+	return -1, -1
+}
+
+func tomlBracketDelta(line string, firstLine bool) (int, bool) {
+	if firstLine {
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			return 0, false
+		}
+		line = parts[1]
+	}
+
+	depth := 0
+	openedArray := false
+	inString := false
+	escaped := false
+	for _, r := range line {
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if r == '\\' {
+				escaped = true
+				continue
+			}
+			if r == '"' {
+				inString = false
+			}
+			continue
+		}
+
+		switch r {
+		case '"':
+			inString = true
+		case '#':
+			return depth, openedArray
+		case '[':
+			depth++
+			openedArray = true
+		case ']':
+			if depth > 0 {
+				depth--
+			}
+		}
+	}
+	return depth, openedArray
 }
 
 func setNotifyLine(content []byte, idx int, notifyLine string) []byte {
 	lines := splitLines(content)
 	if idx >= 0 {
-		// Replace existing notify line at root level
-		lines[idx] = notifyLine
+		_, end := findRootNotifyRange(lines)
+		if end < idx {
+			end = idx
+		}
+		replaced := make([]string, 0, len(lines)-(end-idx))
+		replaced = append(replaced, lines[:idx]...)
+		replaced = append(replaced, notifyLine)
+		replaced = append(replaced, lines[end+1:]...)
+		lines = replaced
 	} else {
 		// Add notify line at root level (before any sections)
 		// Find first section or end of file
@@ -502,31 +686,36 @@ func setNotifyLine(content []byte, idx int, notifyLine string) []byte {
 
 func removeCodexNotifyLine(content []byte) ([]byte, bool) {
 	lines := splitLines(content)
-	out := make([]string, 0, len(lines))
-	removed := false
-
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if isCodexNotifyHookLine(trimmed) {
-			removed = true
-			continue
-		}
-		out = append(out, line)
+	start, end := findRootNotifyRange(lines)
+	if start < 0 || !isCodexNotifyHookLine(strings.Join(lines[start:end+1], " ")) {
+		return content, false
 	}
+
+	out := make([]string, 0, len(lines)-(end-start+1))
+	out = append(out, lines[:start]...)
+	out = append(out, lines[end+1:]...)
 
 	joined := strings.Join(out, "\n")
 	if strings.TrimSpace(joined) == "" {
-		return []byte{}, removed
+		return []byte{}, true
 	}
-	return []byte(joined + "\n"), removed
+	return []byte(joined + "\n"), true
 }
 
 func splitLines(content []byte) []string {
 	normalized := bytes.ReplaceAll(content, []byte("\r\n"), []byte("\n"))
-	scanner := bufio.NewScanner(bytes.NewReader(normalized))
-	lines := []string{}
-	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
+	if len(normalized) == 0 {
+		return nil
+	}
+
+	parts := bytes.Split(normalized, []byte("\n"))
+	if len(parts) > 0 && len(parts[len(parts)-1]) == 0 {
+		parts = parts[:len(parts)-1]
+	}
+
+	lines := make([]string, len(parts))
+	for i, part := range parts {
+		lines[i] = string(part)
 	}
 	return lines
 }
@@ -534,14 +723,14 @@ func splitLines(content []byte) []string {
 func createBackup(configPath string, content []byte) (string, error) {
 	timestamp := fmt.Sprintf("%d", time.Now().UnixNano())
 	backupPath := fmt.Sprintf("%s.bak.%s", configPath, timestamp)
-	if err := writeFileAtomic(backupPath, content, 0o644); err != nil {
+	if err := writeFileAtomic(backupPath, content, fileMode(configPath, 0o600)); err != nil {
 		return "", fmt.Errorf("write backup: %w", err)
 	}
 	return backupPath, nil
 }
 
 func findLatestBackup(configPath string) (string, error) {
-	pattern := regexp.QuoteMeta(configPath) + `\.bak\.\d+$`
+	pattern := `^` + regexp.QuoteMeta(filepath.Base(configPath)) + `\.bak\.(?:\d+|\d{8}-\d{6})$`
 	re := regexp.MustCompile(pattern)
 
 	dir := filepath.Dir(configPath)
@@ -550,28 +739,52 @@ func findLatestBackup(configPath string) (string, error) {
 		return "", fmt.Errorf("read config dir: %w", err)
 	}
 
-	backups := []string{}
+	type backupCandidate struct {
+		path    string
+		modTime time.Time
+	}
+	backups := []backupCandidate{}
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
 		}
-		path := filepath.Join(dir, e.Name())
-		if re.MatchString(path) {
-			backups = append(backups, path)
+		if !re.MatchString(e.Name()) {
+			continue
 		}
+		info, err := e.Info()
+		if err != nil {
+			return "", fmt.Errorf("inspect backup %s: %w", e.Name(), err)
+		}
+		backups = append(backups, backupCandidate{
+			path:    filepath.Join(dir, e.Name()),
+			modTime: info.ModTime(),
+		})
 	}
 
 	if len(backups) == 0 {
 		return "", errors.New("no backup found; cannot restore")
 	}
 
-	sort.Strings(backups)
-	return backups[len(backups)-1], nil
+	sort.Slice(backups, func(i, j int) bool {
+		if backups[i].modTime.Equal(backups[j].modTime) {
+			return backups[i].path < backups[j].path
+		}
+		return backups[i].modTime.Before(backups[j].modTime)
+	})
+	return backups[len(backups)-1].path, nil
+}
+
+func fileMode(path string, fallback os.FileMode) os.FileMode {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fallback
+	}
+	return info.Mode().Perm()
 }
 
 func writeFileAtomic(path string, content []byte, mode os.FileMode) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create dir: %w", err)
 	}
 
@@ -883,6 +1096,202 @@ func terminalBundleID() string {
 	return defaultTerminalID
 }
 
+func suppressFrontmostBundleIDs() []string {
+	if ids := splitBundleIDs(os.Getenv("CODEX_NOTIFY_SUPPRESS_FRONTMOST_BUNDLE_IDS")); len(ids) > 0 {
+		return ids
+	}
+	return splitBundleIDs(terminalBundleID())
+}
+
+func splitBundleIDs(raw string) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	seen := map[string]struct{}{}
+	for _, part := range parts {
+		bundleID := strings.TrimSpace(part)
+		if bundleID == "" {
+			continue
+		}
+		if _, ok := seen[bundleID]; ok {
+			continue
+		}
+		seen[bundleID] = struct{}{}
+		out = append(out, bundleID)
+	}
+	return out
+}
+
+func detectLaunchHostKind() string {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("TERM_PROGRAM"))) {
+	case "ghostty":
+		return hostKindGhostty
+	case "apple_terminal":
+		return hostKindTerminal
+	default:
+		return hostKindUnknown
+	}
+}
+
+func bundleIDForHostKind(hostKind string) string {
+	switch hostKind {
+	case hostKindGhostty:
+		return defaultTerminalID
+	case hostKindTerminal:
+		return terminalAppBundleID
+	default:
+		return ""
+	}
+}
+
+func currentTTY() (string, bool) {
+	path, ok := lookupCmd("tty")
+	if !ok {
+		return "", false
+	}
+
+	out, err := exec.Command(path).CombinedOutput()
+	if err != nil {
+		return "", false
+	}
+
+	tty := normalizeTTY(string(out))
+	if tty == "" || tty == "not a tty" {
+		return "", false
+	}
+	return tty, true
+}
+
+func normalizeTTY(v string) string {
+	v = strings.TrimSpace(v)
+	v = strings.TrimPrefix(v, "/dev/")
+	if strings.EqualFold(v, "missing value") {
+		return ""
+	}
+	return v
+}
+
+func captureLaunchSourceSession() (sourceSession, bool) {
+	hostKind := detectLaunchHostKind()
+	if hostKind == hostKindUnknown {
+		return sourceSession{}, false
+	}
+
+	source := sourceSession{
+		HostKind: hostKind,
+		BundleID: bundleIDForHostKind(hostKind),
+	}
+	if tty, ok := currentTTY(); ok {
+		source.TTY = tty
+	}
+
+	switch hostKind {
+	case hostKindGhostty:
+		if terminalID, ok, err := ghosttyFocusedTerminalID(); err == nil && ok {
+			source.TerminalID = terminalID
+		}
+	case hostKindTerminal:
+		// Terminal.app only needs the launching tty for an exact match.
+	}
+
+	if source.BundleID == "" {
+		return sourceSession{}, false
+	}
+	return source, true
+}
+
+func sourceSessionFromEnv() (sourceSession, bool) {
+	source := sourceSession{
+		HostKind:   strings.ToLower(strings.TrimSpace(os.Getenv(envSourceHostKind))),
+		BundleID:   strings.TrimSpace(os.Getenv(envSourceBundleID)),
+		TTY:        normalizeTTY(os.Getenv(envSourceTTY)),
+		TerminalID: strings.TrimSpace(os.Getenv(envSourceTerminalID)),
+	}
+	if source.BundleID == "" {
+		source.BundleID = bundleIDForHostKind(source.HostKind)
+	}
+	if source.HostKind == "" && source.BundleID == "" && source.TTY == "" && source.TerminalID == "" {
+		return sourceSession{}, false
+	}
+	return source, true
+}
+
+func applySourceSessionEnv(env []string, source sourceSession) []string {
+	if source.BundleID != "" {
+		env = putEnv(env, "CODEX_NOTIFY_TERMINAL_BUNDLE_ID", source.BundleID)
+		env = putEnv(env, envSourceBundleID, source.BundleID)
+	}
+	if source.HostKind != "" {
+		env = putEnv(env, envSourceHostKind, source.HostKind)
+	}
+	if source.TTY != "" {
+		env = putEnv(env, envSourceTTY, source.TTY)
+	}
+	if source.TerminalID != "" {
+		env = putEnv(env, envSourceTerminalID, source.TerminalID)
+	}
+	return env
+}
+
+func putEnv(env []string, key, value string) []string {
+	prefix := key + "="
+	replaced := false
+	for i, entry := range env {
+		if strings.HasPrefix(entry, prefix) {
+			env[i] = prefix + value
+			replaced = true
+		}
+	}
+	if !replaced {
+		env = append(env, prefix+value)
+	}
+	return env
+}
+
+func resolveHookSuppressionContext() hookSuppressionContext {
+	source, ok := sourceSessionFromEnv()
+	if !ok {
+		return hookSuppressionContext{}
+	}
+
+	switch source.HostKind {
+	case hostKindGhostty:
+		if strings.TrimSpace(source.TerminalID) == "" {
+			return hookSuppressionContext{}
+		}
+		frontmostTerminalID, isFrontmost, err := ghosttyFrontmostTerminalID()
+		if err != nil {
+			return hookSuppressionContext{}
+		}
+		ctx := hookSuppressionContext{Explicit: true}
+		if isFrontmost && frontmostTerminalID != "" && frontmostTerminalID == source.TerminalID {
+			ctx.SuppressNotification = true
+		}
+		return ctx
+	case hostKindTerminal:
+		if normalizeTTY(source.TTY) == "" {
+			return hookSuppressionContext{}
+		}
+		frontmostTTY, isFrontmost, err := terminalFrontmostTTY()
+		if err != nil {
+			return hookSuppressionContext{}
+		}
+		ctx := hookSuppressionContext{Explicit: true}
+		if isFrontmost && normalizeTTY(frontmostTTY) == normalizeTTY(source.TTY) {
+			ctx.SuppressNotification = true
+		}
+		return ctx
+	default:
+		return hookSuppressionContext{}
+	}
+}
+
+func effectiveSuppressFrontmostBundleIDs(explicit bool, override []string) []string {
+	if explicit {
+		return append([]string(nil), override...)
+	}
+	return suppressFrontmostBundleIDs()
+}
+
 func approveKeySequence() []string {
 	return keySequenceFromEnv("CODEX_NOTIFY_APPROVE_KEYS", defaultApproveSeq)
 }
@@ -966,7 +1375,7 @@ func shouldUseNativeApprovalNotification(payload map[string]any) bool {
 	return v == "1" || v == "true" || v == "yes" || v == "on"
 }
 
-func sendNativeApprovalNotification(payload map[string]any) error {
+func sendNativeApprovalNotification(payload map[string]any, suppression hookSuppressionContext) error {
 	helperPath, err := ensureApprovalActionHelper()
 	if err != nil {
 		return err
@@ -978,13 +1387,16 @@ func sendNativeApprovalNotification(payload map[string]any) error {
 	if len(choices) == 0 {
 		choices = defaultApprovalChoices(threadID)
 	}
-	lockPath, err := approvalInteractionLockPath()
-	if err != nil {
-		return err
-	}
 	timeoutSeconds := approvalActionTimeoutSeconds()
-	if err := writeApprovalInteractionLock(lockPath, timeoutSeconds); err != nil {
-		return err
+	lockPath := ""
+	if threadID != "" {
+		lockPath, err = approvalInteractionLockPath(threadID)
+		if err != nil {
+			return err
+		}
+		if err := writeApprovalInteractionLock(lockPath, timeoutSeconds); err != nil {
+			return err
+		}
 	}
 
 	args := []string{
@@ -993,7 +1405,12 @@ func sendNativeApprovalNotification(payload map[string]any) error {
 		"--identifier", notificationGroup("approval-native", threadID),
 		"--timeout-seconds", strconv.Itoa(timeoutSeconds),
 		"--dismiss-on-activate-bundle-id", terminalBundleID(),
-		"--interaction-lock-file", lockPath,
+	}
+	if lockPath != "" {
+		args = append(args, "--interaction-lock-file", lockPath)
+	}
+	for _, bundleID := range effectiveSuppressFrontmostBundleIDs(suppression.Explicit, suppression.BundleIDs) {
+		args = append(args, "--suppress-frontmost-bundle-id", bundleID)
 	}
 	for _, choice := range choices {
 		args = append(args, "--choice-label", choice.Label)
@@ -1002,7 +1419,7 @@ func sendNativeApprovalNotification(payload map[string]any) error {
 
 	cmd := exec.Command(helperPath, args...)
 	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
+	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		clearApprovalInteractionLock(lockPath)
 		return fmt.Errorf("start native approval notifier: %w", err)
@@ -1024,6 +1441,9 @@ func sendNativePopupNotification(req notificationRequest, title, message, group 
 		"--timeout-seconds", strconv.Itoa(popupTimeoutSeconds()),
 		"--dismiss-on-activate-bundle-id", terminalBundleID(),
 	}
+	for _, bundleID := range effectiveSuppressFrontmostBundleIDs(req.FrontmostSuppressionExplicit, req.SuppressFrontmostBundleIDs) {
+		args = append(args, "--suppress-frontmost-bundle-id", bundleID)
+	}
 	for _, choice := range choices {
 		args = append(args, "--choice-label", choice.Label)
 		args = append(args, "--choice-cmd", choice.Command)
@@ -1031,7 +1451,7 @@ func sendNativePopupNotification(req notificationRequest, title, message, group 
 
 	cmd := exec.Command(helperPath, args...)
 	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
+	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start native popup notifier: %w", err)
 	}
@@ -1168,18 +1588,25 @@ func readPopupSettings() (popupSettings, error) {
 	return settings, nil
 }
 
-func approvalInteractionLockPath() (string, error) {
+func approvalInteractionLockPath(threadID string) (string, error) {
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		return "", nil
+	}
+
 	stateDir, err := runtimeStateDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(stateDir, interactionLockName), nil
+
+	threadHash := sha256.Sum256([]byte(threadID))
+	return filepath.Join(stateDir, fmt.Sprintf("%s-%x.lock", interactionLockPrefix, threadHash[:])), nil
 }
 
 func writeApprovalInteractionLock(path string, timeoutSeconds int) error {
 	expiresAt := time.Now().Add(time.Duration(timeoutSeconds+interactionLockGraceSeconds) * time.Second).Unix()
 	content := fmt.Sprintf("%d\n", expiresAt)
-	if err := writeFileAtomic(path, []byte(content), 0o644); err != nil {
+	if err := writeFileAtomic(path, []byte(content), 0o600); err != nil {
 		return fmt.Errorf("write approval lock: %w", err)
 	}
 	return nil
@@ -1192,9 +1619,12 @@ func clearApprovalInteractionLock(path string) {
 	_ = os.Remove(path)
 }
 
-func isApprovalInteractionLockActive() bool {
-	lockPath, err := approvalInteractionLockPath()
+func isApprovalInteractionLockActive(threadID string) bool {
+	lockPath, err := approvalInteractionLockPath(threadID)
 	if err != nil {
+		return false
+	}
+	if lockPath == "" {
 		return false
 	}
 
@@ -1209,7 +1639,7 @@ func isApprovalInteractionLockActive() bool {
 		return false
 	}
 
-	if time.Now().Unix() > expiresAt {
+	if time.Now().Unix() >= expiresAt {
 		clearApprovalInteractionLock(lockPath)
 		return false
 	}
@@ -1225,11 +1655,15 @@ func ensureApprovalActionHelper() (string, error) {
 	sourcePath := filepath.Join(helperDir, helperSourceFilename)
 	binaryPath := filepath.Join(helperDir, helperBinaryName)
 	hashPath := filepath.Join(helperDir, helperHashName)
+	moduleCachePath := filepath.Join(helperDir, "swift-module-cache")
+	if err := ensureWritableDir(moduleCachePath); err != nil {
+		return "", fmt.Errorf("prepare swift module cache dir: %w", err)
+	}
 
 	expectedHash := helperSourceHash(approvalActionNotifierSource)
 	currentHash, _ := os.ReadFile(hashPath)
 	if strings.TrimSpace(string(currentHash)) == expectedHash {
-		if info, err := os.Stat(binaryPath); err == nil && info.Mode().IsRegular() {
+		if info, err := os.Stat(binaryPath); err == nil && info.Mode().IsRegular() && info.Mode()&0o111 != 0 {
 			return binaryPath, nil
 		}
 	}
@@ -1243,13 +1677,17 @@ func ensureApprovalActionHelper() (string, error) {
 		return "", fmt.Errorf("write helper source: %w", err)
 	}
 
-	tmpBinaryPath := binaryPath + ".tmp"
-	_ = os.Remove(tmpBinaryPath)
-
-	moduleCachePath := filepath.Join(helperDir, "swift-module-cache")
-	if err := os.MkdirAll(moduleCachePath, 0o755); err != nil {
-		return "", fmt.Errorf("create swift module cache dir: %w", err)
+	tmpBinary, err := os.CreateTemp(helperDir, helperBinaryName+".tmp-*")
+	if err != nil {
+		return "", fmt.Errorf("create helper temp binary: %w", err)
 	}
+	tmpBinaryPath := tmpBinary.Name()
+	if err := tmpBinary.Close(); err != nil {
+		_ = os.Remove(tmpBinaryPath)
+		return "", fmt.Errorf("close helper temp binary: %w", err)
+	}
+	_ = os.Remove(tmpBinaryPath)
+	defer os.Remove(tmpBinaryPath)
 
 	compileCmd := exec.Command(
 		swiftcPath,
@@ -1283,7 +1721,7 @@ func ensureApprovalActionHelper() (string, error) {
 
 func runtimeStateDir() (string, error) {
 	candidates := []string{}
-	if cacheDir, err := os.UserCacheDir(); err == nil {
+	if cacheDir, err := userCacheDir(); err == nil {
 		cacheDir = strings.TrimSpace(cacheDir)
 		if cacheDir != "" {
 			candidates = append(candidates, filepath.Join(cacheDir, appName))
@@ -1320,7 +1758,10 @@ func runtimeStateDir() (string, error) {
 }
 
 func ensureWritableDir(dir string) error {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
 		return err
 	}
 
@@ -1632,6 +2073,81 @@ func escapeAppleScript(s string) string {
 	return replacer.Replace(s)
 }
 
+func runAppleScript(lines ...string) (string, error) {
+	path, ok := lookupCmd("osascript")
+	if !ok {
+		return "", errors.New("osascript not found")
+	}
+
+	args := make([]string, 0, len(lines)*2)
+	for _, line := range lines {
+		args = append(args, "-e", line)
+	}
+	cmd := exec.Command(path, args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("osascript failed: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+func ghosttyFocusedTerminalID() (string, bool, error) {
+	out, err := runAppleScript(
+		`tell application "Ghostty"`,
+		`if (count of windows) is 0 then return ""`,
+		`set targetTerminal to focused terminal of selected tab of front window`,
+		`if targetTerminal is missing value then return ""`,
+		`return id of targetTerminal`,
+		`end tell`,
+	)
+	if err != nil {
+		return "", false, err
+	}
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return "", false, nil
+	}
+	return out, true, nil
+}
+
+func ghosttyFrontmostTerminalID() (string, bool, error) {
+	out, err := runAppleScript(
+		`tell application "Ghostty"`,
+		`if not frontmost then return "__NOT_FRONTMOST__"`,
+		`if (count of windows) is 0 then return ""`,
+		`set targetTerminal to focused terminal of selected tab of front window`,
+		`if targetTerminal is missing value then return ""`,
+		`return id of targetTerminal`,
+		`end tell`,
+	)
+	if err != nil {
+		return "", false, err
+	}
+	if strings.TrimSpace(out) == "__NOT_FRONTMOST__" {
+		return "", false, nil
+	}
+	return strings.TrimSpace(out), true, nil
+}
+
+func terminalFrontmostTTY() (string, bool, error) {
+	out, err := runAppleScript(
+		`tell application "Terminal"`,
+		`if not frontmost then return "__NOT_FRONTMOST__"`,
+		`if (count of windows) is 0 then return ""`,
+		`set targetTab to selected tab of front window`,
+		`if targetTab is missing value then return ""`,
+		`return tty of targetTab`,
+		`end tell`,
+	)
+	if err != nil {
+		return "", false, err
+	}
+	if strings.TrimSpace(out) == "__NOT_FRONTMOST__" {
+		return "", false, nil
+	}
+	return normalizeTTY(out), true, nil
+}
+
 func lookupCmd(name string) (string, bool) {
 	path, err := exec.LookPath(name)
 	if err != nil {
@@ -1655,5 +2171,24 @@ func isCodexNotifyHookLine(trimmedLine string) bool {
 	}
 
 	rhs := strings.TrimSpace(parts[1])
-	return codexHookArrayRE.MatchString(rhs)
+	matches := quotedStringRE.FindAllString(rhs, -1)
+	if len(matches) < 2 {
+		return false
+	}
+
+	quotedValues := make([]string, 0, len(matches))
+	for _, match := range matches {
+		value, err := strconv.Unquote(match)
+		if err != nil {
+			continue
+		}
+		quotedValues = append(quotedValues, value)
+	}
+
+	for i := 0; i+1 < len(quotedValues); i++ {
+		if filepath.Base(quotedValues[i]) == appName && quotedValues[i+1] == "hook" {
+			return true
+		}
+	}
+	return false
 }

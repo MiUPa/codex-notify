@@ -78,12 +78,30 @@ codex-notify init --replace
 
 ```bash
 codex-notify init [--replace] [--config path]
+codex-notify launch -- codex [args...]
 codex-notify doctor [--config path]
 codex-notify test [message]
 codex-notify hook [json-payload]
 codex-notify action <open|approve|reject|choose|submit> [--thread-id id] [--text value]
 codex-notify uninstall [--restore-config] [--config path]
 ```
+
+## Session-Scoped Suppression
+
+For exact suppression in Ghostty and Terminal.app, start Codex through the launcher:
+
+```bash
+codex-notify launch -- codex
+```
+
+What this changes:
+- `codex-notify launch` tags the Codex process with source-session metadata before the normal `notify` hook runs.
+- Ghostty suppresses only when the same focused terminal surface is still frontmost.
+- Terminal.app suppresses only when the same tab/tty is still frontmost.
+- VS Code, Zed, and other apps still use the existing app-level suppression list.
+
+Current limitation:
+- Session-scoped suppression is checked when the popup is created. If a popup is already visible, later window changes still use the existing popup behavior and are not re-evaluated per session.
 
 ## How `init` Works
 
@@ -108,15 +126,20 @@ Restore from the latest backup:
 codex-notify uninstall --restore-config
 ```
 
+`uninstall --restore-config` only restores when the current config still contains
+the codex-notify hook. Configuration permissions are preserved during updates.
+
 ## Event Support
 
 - All events use popup UI by default (bottom-right corner), including `test`, `agent-turn-complete`, `approval-requested`, and unknown events.
 - `approval-requested` supports selectable actions (`Open`, `Approve`, `Reject`) and dynamic payload choices.
-- While the approval popup is open, incoming notifications are suppressed to avoid interruption during user action.
-- Popup closes automatically when the configured terminal app becomes active again.
+- While the approval popup is open, notifications for the same thread are suppressed to avoid interruption during user action. Notifications without a thread id are not globally suppressed.
+- Wrapped Ghostty and Terminal.app sessions suppress only when the same source session is frontmost.
+- Other apps continue to suppress at app scope based on `CODEX_NOTIFY_SUPPRESS_FRONTMOST_BUNDLE_IDS`.
+- App-level suppression popups still close automatically when any configured frontmost-suppression app becomes active again.
 - Popup window uses a wider fixed frame to show more of the message before truncation, and `Read more` jumps back to the configured Codex terminal/IDE.
 - Popup timeout can be changed from the popup `...` menu and is saved for future popups.
-- Popup display no longer steals keyboard focus from the app you are currently using.
+- The previously focused app is restored shortly after the popup opens.
 - If popup helper is unavailable, it falls back to system notification.
 
 ## Approval Actions
@@ -132,6 +155,7 @@ codex-notify uninstall --restore-config
 
 Default behavior:
 - Terminal app bundle id: `com.mitchellh.ghostty`
+- Frontmost suppression bundle ids: fallback to `CODEX_NOTIFY_TERMINAL_BUNDLE_ID`, or set a comma-separated list
 - Approve key sequence: `y,enter`
 - Reject key sequence: `n,enter`
 - Notification UI mode: `popup`
@@ -143,6 +167,7 @@ Override with environment variables:
 
 ```bash
 export CODEX_NOTIFY_TERMINAL_BUNDLE_ID="com.mitchellh.ghostty"
+export CODEX_NOTIFY_SUPPRESS_FRONTMOST_BUNDLE_IDS="com.mitchellh.ghostty,com.apple.Terminal,com.microsoft.VSCode,dev.zed.Zed"
 export CODEX_NOTIFY_APPROVE_KEYS="y,enter"
 export CODEX_NOTIFY_REJECT_KEYS="n,enter"
 export CODEX_NOTIFY_ENABLE_APPROVAL_ACTIONS="1"
@@ -167,6 +192,9 @@ Important:
 make build
 make test
 ```
+
+`make build` targets the current Mac architecture. Use `make build TARGET_ARCH=amd64`
+when an Intel-compatible binary is needed on Apple Silicon.
 
 ## Release
 
